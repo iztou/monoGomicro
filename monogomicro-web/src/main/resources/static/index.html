@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>monoGomicro 控制台</title>
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font: 13px/1.5 -apple-system, "PingFang SC", sans-serif; display: flex; height: 100vh; background: #0f1419; color: #e6e1cf; }
+  #side { width: 340px; min-width: 340px; padding: 14px; overflow-y: auto; background: #161b22; border-right: 1px solid #30363d; }
+  #graph { flex: 1; position: relative; }
+  h1 { font-size: 16px; margin-bottom: 10px; color: #58a6ff; }
+  h2 { font-size: 13px; margin: 14px 0 6px; color: #f2cc60; }
+  input, select, button { width: 100%; padding: 6px 8px; margin: 3px 0; background: #0d1117; color: #e6e1cf; border: 1px solid #30363d; border-radius: 6px; font-size: 12px; }
+  button { background: #1f6feb; border: none; cursor: pointer; }
+  button:hover { background: #388bfd; }
+  button.ghost { background: #21262d; border: 1px solid #30363d; }
+  .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .metric { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 8px; }
+  .metric .v { font-size: 18px; font-weight: 600; color: #7ee787; }
+  .metric .l { font-size: 11px; color: #8b949e; }
+  .communities { max-height: 180px; overflow-y: auto; }
+  .community { padding: 4px 8px; border-radius: 4px; margin: 2px 0; background: #0d1117; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+  #detail { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 10px; margin-top: 8px; }
+  #detail pre { font-size: 11px; white-space: pre-wrap; color: #8b949e; max-height: 120px; overflow-y: auto; }
+  .tag { display: inline-block; padding: 1px 6px; border-radius: 8px; background: #21262d; font-size: 11px; margin-right: 4px; }
+  #toast { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: #238636; padding: 8px 16px; border-radius: 6px; display: none; z-index: 10; }
+  #legend { position: absolute; bottom: 12px; left: 12px; background: rgba(22,27,34,.9); border: 1px solid #30363d; border-radius: 6px; padding: 8px 10px; }
+</style>
+</head>
+<body>
+<div id="side">
+  <h1>monoGomicro 分区控制台</h1>
+  <h2>载入数据</h2>
+  <input id="analysisPath" placeholder="analysis.json 绝对路径">
+  <input id="partitionPath" placeholder="partition.json（可空，空则自动分区）">
+  <button onclick="load()">载入</button>
+
+  <h2>指标（调整后实时重算）</h2>
+  <div class="metrics">
+    <div class="metric"><div class="v" id="mCross">-</div><div class="l">跨服务通信占比</div></div>
+    <div class="metric"><div class="v" id="mMod">-</div><div class="l">模度 Q</div></div>
+    <div class="metric"><div class="v" id="mKernel">-</div><div class="l">共享内核类数</div></div>
+    <div class="metric"><div class="v" id="mNodes">-</div><div class="l">图中节点数</div></div>
+  </div>
+
+  <h2>服务划分</h2>
+  <div class="communities" id="communities"></div>
+
+  <div id="detail" style="display:none">
+    <b id="dName"></b>
+    <div id="dTags"></div>
+    <div style="margin-top:6px">移动到：</div>
+    <select id="dMove"></select>
+    <button class="ghost" onclick="moveNode()">应用移动</button>
+    <pre id="dEdges"></pre>
+  </div>
+
+  <h2>导出</h2>
+  <input id="savePath" placeholder="partition.json 保存路径">
+  <button class="ghost" onclick="save()">保存分区</button>
+  <h2>生成微服务工程</h2>
+  <input id="projectDir" placeholder="原单体项目根目录">
+  <input id="outDir" placeholder="生成输出目录">
+  <button onclick="generate()">生成</button>
+  <pre id="genResult" style="font-size:11px;color:#8b949e;white-space:pre-wrap;margin-top:6px"></pre>
+</div>
+<div id="graph">
+  <div id="toast"></div>
+  <div id="legend"></div>
+  <svg width="100%" height="100%"></svg>
+</div>
+
+<script>
+const COLORS = d3.schemeCategory10.concat(d3.schemePaired);
+let G = null, selected = null;
+
+async function api(path, body, method) {
+  const resp = await fetch(path, body ? {method: method||'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)} : {});
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || resp.status);
+  return data;
+}
+
+async function load() {
+  try {
+    G = await api('/api/load', {analysisPath: analysisPath.value, partitionPath: partitionPath.value});
+    render();
+  } catch (e) { toast('载入失败：' + e.message); }
+}
+
+function render() {
+  renderMetrics(G.metrics);
+  renderCommunities();
+  renderGraph();
+}
+
+function renderMetrics(m) {
+  mCross.textContent = m ? (m.crossRatio * 100).toFixed(1) + '%' : '-';
+  mMod.textContent = m ? m.modularity.toFixed(3) : '-';
+  mKernel.textContent = m ? m.kernelSize : '-';
+  mNodes.textContent = G ? G.nodes.length : '-';
+}
+
+function renderCommunities() {
+  const html = G.communities.map(c =>
+    `<div class="community"><span class="dot" style="background:${colorOf(c.id)}"></span>${c.name}（${c.size}）</div>`).join('')
+    + `<div class="community"><span class="dot" style="background:#8b949e"></span>共享内核（${G.kernel.length}）</div>`;
+  communities.innerHTML = html;
+  legend.innerHTML = G.communities.slice(0, 12).map(c =>
+    `<div><span class="dot" style="background:${colorOf(c.id)}"></span>${c.name}</div>`).join('')
+    + `<div><span class="dot" style="background:#8b949e"></span>共享内核</div>`;
+}
+
+function colorOf(id) { return id < 0 ? '#8b949e' : COLORS[id % COLORS.length]; }
+
+function renderGraph() {
+  const svg = d3.select('svg');
+  svg.selectAll('*').remove();
+  const width = graph.clientWidth, height = graph.clientHeight;
+  const nodes = G.nodes.map(n => ({...n}));
+  const index = new Map(nodes.map(n => [n.id, n]));
+  // 阈值过滤：低权重边不画，大图保持可读
+  const weights = G.links.map(l => l.weight).sort((a,b) => a-b);
+  const threshold = weights[Math.floor(weights.length * 0.6)] || 1;
+  const links = G.links.filter(l => l.weight >= threshold && index.has(l.source) && index.has(l.target));
+  const sim = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(d => d.id).distance(60).strength(l => Math.min(0.4, l.weight / 40)))
+    .force('charge', d3.forceManyBody().strength(-120))
+    .force('center', d3.forceCenter(width / 2, height / 2))
+    .force('collide', d3.forceCollide(9));
+
+  svg.append('defs').selectAll('marker').data([-1, ...G.communities.map(c => c.id)]).join('marker')
+    .attr('id', d => 'arrow' + d).attr('viewBox', '0 -5 10 10')
+    .attr('refX', 14).attr('markerWidth', 5).attr('markerHeight', 5).attr('orient', 'auto')
+    .append('path').attr('fill', colorOf).attr('d', 'M0,-5L10,0L0,5');
+
+  const link = svg.append('g').selectAll('line').data(links).join('line')
+    .attr('stroke', l => {
+      const ca = index.get(l.source).community, cb = index.get(l.target).community;
+      return (ca >= 0 && ca === cb) ? '#30363d' : '#bc4c00';
+    })
+    .attr('stroke-opacity', l => (ca_isCross(l, index) ? 0.7 : 0.25))
+    .attr('stroke-width', l => Math.min(3, l.weight / 12))
+    .attr('marker-end', l => 'url(#arrow' + index.get(l.target).community + ')');
+
+  function ca_isCross(l, idx) {
+    const ca = idx.get(l.source).community, cb = idx.get(l.target).community;
+    return ca !== cb;
+  }
+
+  const node = svg.append('g').selectAll('circle').data(nodes).join('circle')
+    .attr('r', d => d.stereotype === 'CONTROLLER' ? 7 : d.stereotype === 'SERVICE_IMPL' ? 6 : 4)
+    .attr('fill', d => colorOf(d.community))
+    .attr('stroke', '#0f1419').attr('stroke-width', 1)
+    .call(d3.drag().on('start', dragStart).on('drag', dragging).on('end', dragEnd))
+    .on('click', (e, d) => selectNode(d));
+
+  node.append('title').text(d => d.id);
+
+  sim.on('tick', () => {
+    link.attr('x1', l => l.source.x).attr('y1', l => l.source.y)
+        .attr('x2', l => l.target.x).attr('y2', l => l.target.y);
+    node.attr('cx', d => d.x).attr('cy', d => d.y);
+  });
+
+  function dragStart(e, d) { if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }
+  function dragging(e, d) { d.fx = e.x; d.fy = e.y; }
+  function dragEnd(e, d) { if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }
+}
+
+function selectNode(d) {
+  selected = d.id;
+  dName.textContent = d.name;
+  dTags.innerHTML = `<span class="tag">${d.stereotype}</span><span class="tag">${d.tier}</span><span class="tag">${d.module || ''}</span>`;
+  const opts = [`<option value="-1">共享内核</option>`]
+    .concat(G.communities.map(c => `<option value="${c.id}" ${c.id === d.community ? 'selected' : ''}>${c.name}</option>`));
+  dMove.innerHTML = opts.join('');
+  const related = G.links.filter(l => l.source === d.id || l.target === d.id)
+    .sort((a, b) => b.weight - a.weight).slice(0, 10);
+  dEdges.textContent = related.map(l => {
+    const other = l.source === d.id ? l.target : l.source;
+    return (l.source === d.id ? ' → ' : ' ← ') + other.split('.').pop() + '  w=' + l.weight + '  [' + l.kinds.join(',') + ']';
+  }).join('\n') || '无依赖';
+  detail.style.display = 'block';
+}
+
+async function moveNode() {
+  if (!selected) return;
+  try {
+    const m = await api('/api/move', {fqcn: selected, targetCommunity: parseInt(dMove.value)});
+    const fresh = await api('/api/state');
+    G = fresh; render();
+    toast('已移动，指标已重算');
+  } catch (e) { toast('移动失败：' + e.message); }
+}
+
+async function save() {
+  try {
+    await fetch('/api/save?path=' + encodeURIComponent(savePath.value), {method: 'POST'});
+    toast('已保存');
+  } catch (e) { toast('保存失败'); }
+}
+
+async function generate() {
+  genResult.textContent = '生成中…';
+  try {
+    const r = await api('/api/generate', {projectDir: projectDir.value, outDir: outDir.value});
+    genResult.textContent = r.summary + '\n\n需人工处理 ' + r.manualItems.length + ' 项（详见 MIGRATION.md）';
+    toast('生成完成');
+  } catch (e) { genResult.textContent = '失败：' + e.message; }
+}
+
+function toast(msg) {
+  toast_div = document.getElementById('toast');
+  toast_div.textContent = msg; toast_div.style.display = 'block';
+  setTimeout(() => toast_div.style.display = 'none', 2500);
+}
+</script>
+</body>
+</html>

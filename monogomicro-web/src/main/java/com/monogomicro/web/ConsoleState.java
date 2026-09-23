@@ -1,0 +1,74 @@
+package com.monogomicro.web;
+
+import com.monogomicro.core.graph.DependencyGraph;
+import com.monogomicro.core.model.AnalysisReport;
+import com.monogomicro.core.model.ClassInfo;
+import com.monogomicro.core.model.PartitionResult;
+import org.springframework.stereotype.Component;
+
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+/** 会话状态：当前载入的分析与分区，支持页面调整后实时重算指标。 */
+@Component
+public class ConsoleState {
+
+    private AnalysisReport report;
+    private DependencyGraph graph;
+    private PartitionResult partition;
+    private final Map<String, Integer> labels = new LinkedHashMap<>(); // fqcn -> 社区 id（-1 = 内核）
+    private final Map<String, String> sourcePaths = new HashMap<>();
+
+    public void load(AnalysisReport report, PartitionResult partition) {
+        this.report = report;
+        this.graph = report.toGraph();
+        this.partition = partition;
+        labels.clear();
+        sourcePaths.clear();
+        for (ClassInfo c : report.getClasses()) {
+            sourcePaths.put(c.getFqcn(), c.getSourcePath());
+        }
+        for (String kernel : partition.getKernelClasses()) {
+            labels.put(kernel, -1);
+        }
+        for (PartitionResult.Community c : partition.getCommunities()) {
+            for (String fqcn : c.getClasses()) {
+                labels.put(fqcn, c.getId());
+            }
+        }
+    }
+
+    public boolean isLoaded() {
+        return report != null;
+    }
+
+    public AnalysisReport report() { return report; }
+    public DependencyGraph graph() { return graph; }
+    public PartitionResult partition() { return partition; }
+    public Map<String, Integer> labels() { return labels; }
+    public String sourcePath(String fqcn) { return sourcePaths.get(fqcn); }
+
+    /** 调整后回写分区对象（重算指标在控制器里做） */
+    public void move(String fqcn, int targetCommunity) {
+        if (!labels.containsKey(fqcn)) {
+            throw new IllegalArgumentException("未知类: " + fqcn);
+        }
+        labels.put(fqcn, targetCommunity);
+        partition.getCommunities().forEach(c -> c.getClasses().remove(fqcn));
+        if (targetCommunity == -1) {
+            if (!partition.getKernelClasses().contains(fqcn)) {
+                partition.getKernelClasses().add(fqcn);
+            }
+            return;
+        }
+        partition.getKernelClasses().remove(fqcn);
+        for (PartitionResult.Community c : partition.getCommunities()) {
+            if (c.getId() == targetCommunity) {
+                c.getClasses().add(fqcn);
+                return;
+            }
+        }
+        throw new IllegalArgumentException("未知社区: " + targetCommunity);
+    }
+}

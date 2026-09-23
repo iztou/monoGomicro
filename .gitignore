@@ -1,0 +1,20 @@
+# Maven 构建产物
+target/
+*.class
+*.jar.original
+dependency-reduced-pom.xml
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# 系统文件
+.DS_Store
+
+# 工具运行产物（实测数据 analysis/partition 作为验收证据入库，生成工程不入库）
+m2m-out/services/
+*.log
