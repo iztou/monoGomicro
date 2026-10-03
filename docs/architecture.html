@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>monoGomicro 系统架构</title>
+<style>
+  :root {
+    --core: #2563eb; --core-bg: #eff6ff;
+    --agent: #ea580c; --agent-bg: #fff7ed;
+    --codegen: #16a34a; --codegen-bg: #f0fdf4;
+    --cli: #475569; --cli-bg: #f8fafc;
+    --web: #9333ea; --web-bg: #faf5ff;
+    --file: #b45309; --file-bg: #fffbeb;
+    --ink: #1e293b; --muted: #64748b; --line: #cbd5e1;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; color: var(--ink); background: #f1f5f9; padding: 32px 20px 60px; }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  h1 { font-size: 26px; margin-bottom: 4px; }
+  .sub { color: var(--muted); font-size: 14px; margin-bottom: 28px; }
+  h2 { font-size: 19px; margin: 36px 0 14px; padding-left: 10px; border-left: 4px solid var(--core); }
+
+  /* ── 流水线图 ── */
+  .pipeline { background: #fff; border-radius: 14px; padding: 26px 22px; box-shadow: 0 1px 3px rgba(0,0,0,.08); overflow-x: auto; }
+  .lane { display: flex; align-items: stretch; gap: 0; min-width: 900px; }
+  .lane + .lane { margin-top: 34px; }
+  .stage { flex: 1; border-radius: 10px; padding: 12px 14px; border: 1.5px solid; position: relative; }
+  .stage .tag { font-size: 11px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; }
+  .stage .name { font-weight: 700; font-size: 15px; margin: 2px 0 6px; }
+  .stage ul { list-style: none; font-size: 12.5px; line-height: 1.75; color: #334155; }
+  .stage ul li::before { content: "· "; color: var(--muted); }
+  .arrow { display: flex; align-items: center; padding: 0 4px; color: var(--muted); font-size: 22px; flex: 0 0 auto; }
+  .st-core  { border-color: var(--core);  background: var(--core-bg); }  .st-core  .tag { color: var(--core); }
+  .st-agent { border-color: var(--agent); background: var(--agent-bg); } .st-agent .tag { color: var(--agent); }
+  .st-codegen{border-color: var(--codegen);background: var(--codegen-bg);}.st-codegen .tag { color: var(--codegen); }
+  .st-web   { border-color: var(--web);   background: var(--web-bg); }   .st-web   .tag { color: var(--web); }
+  .st-file  { border-color: var(--file);  background: var(--file-bg); border-style: dashed; } .st-file .tag { color: var(--file); }
+  .st-out   { border-color: var(--codegen); background: var(--codegen-bg); }
+  .lane-label { writing-mode: vertical-lr; text-orientation: mixed; display: flex; align-items: center; font-size: 12px; color: var(--muted); margin-right: 10px; letter-spacing: 2px; flex: 0 0 auto; }
+  .down-note { text-align: center; color: var(--muted); font-size: 13px; margin-top: 10px; }
+
+  /* ── 模块卡片 ── */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; }
+  .card { background: #fff; border-radius: 12px; padding: 16px 18px; box-shadow: 0 1px 3px rgba(0,0,0,.08); border-top: 4px solid var(--line); }
+  .card.core { border-top-color: var(--core); } .card.agent { border-top-color: var(--agent); }
+  .card.codegen { border-top-color: var(--codegen); } .card.cli { border-top-color: var(--cli); } .card.web { border-top-color: var(--web); }
+  .card h3 { font-size: 15.5px; margin-bottom: 2px; }
+  .card .role { font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
+  .card .classes { font-size: 12px; line-height: 1.8; }
+  .card .classes code { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; font-size: 11.5px; }
+
+  /* ── 技术栈表 ── */
+  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08); font-size: 13.5px; }
+  th { background: #0f172a; color: #fff; text-align: left; padding: 10px 14px; font-size: 13px; }
+  td { padding: 10px 14px; border-top: 1px solid #e2e8f0; vertical-align: top; line-height: 1.65; }
+  td:first-child { white-space: nowrap; font-weight: 600; }
+  td:nth-child(2) { white-space: nowrap; color: var(--muted); }
+  .tech-group td { background: #f8fafc; font-weight: 700; color: var(--muted); font-size: 12.5px; letter-spacing: 1px; }
+
+  /* ── 算法要点 ── */
+  .algo { background: #fff; border-radius: 12px; padding: 18px 22px; box-shadow: 0 1px 3px rgba(0,0,0,.08); font-size: 13.5px; line-height: 1.9; }
+  .algo b { color: var(--core); }
+  .formula { font-family: ui-monospace, Menlo, monospace; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-size: 12.5px; }
+  @media print { body { background: #fff; } .pipeline, .card, table, .algo { box-shadow: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>monoGomicro 系统架构</h1>
+  <div class="sub">Java 单体 → 微服务拆分建议工具（IBM Mono2Micro 复刻）· Java 17 · Maven 五模块 · RuoYi 4.8.3 实测通过</div>
+
+  <!-- ══════════ 一、主流水线 ══════════ -->
+  <h2>一、数据流水线：四条命令串起的完整链路</h2>
+  <div class="pipeline">
+
+    <div class="lane">
+      <div class="lane-label">静态主线</div>
+      <div class="stage st-file">
+        <div class="tag">输入</div>
+        <div class="name">单体项目</div>
+        <ul><li>Java 源码 + Maven pom</li><li>指定业务包前缀</li></ul>
+      </div>
+      <div class="arrow">→</div>
+      <div class="stage st-core">
+        <div class="tag">core · m2m analyze</div>
+        <div class="name">静态分析</div>
+        <ul><li>ProjectScanner 符号解析</li><li>Maven 依赖 jar 解析</li><li>加权依赖图构建</li></ul>
+      </div>
+      <div class="arrow">→</div>
+      <div class="stage st-file">
+        <div class="tag">产物</div>
+        <div class="name">analysis.json</div>
+        <ul><li>类清单 + 构造型</li><li>980 条加权边（行号留痕）</li></ul>
+      </div>
+      <div class="arrow">→</div>
+      <div class="stage st-core">
+        <div class="tag">core · m2m partition</div>
+        <div class="name">智能分区</div>
+        <ul><li>双图融合 → Louvain</li><li>模拟退火多目标优化</li><li>共享内核检测</li></ul>
+      </div>
+      <div class="arrow">→</div>
+      <div class="stage st-file">
+        <div class="tag">产物</div>
+        <div class="name">partition.json</div>
+        <ul><li>12 服务（Q=0.81）</li><li>类 → 服务映射</li></ul>
+      </div>
+      <div class="arrow">→</div>
+      <div class="stage st-codegen">
+        <div class="tag">codegen · m2m generate</div>
+        <div class="name">工程生成</div>
+        <ul><li>微服务骨架 + RPC 桥</li><li>内核闭包 / 类提升</li><li>MIGRATION.md</li></ul>
+      </div>
+      <div class="arrow">→</div>
+      <div class="stage st-out">
+        <div class="tag">输出</div>
+        <div class="name">微服务工程</div>
+        <ul><li>12 服务 + common 内核</li><li><b>mvn compile 通过</b></li></ul>
+      </div>
+    </div>
+
+    <div class="lane">
+      <div class="lane-label">动态支线</div>
+      <div class="stage st-agent">
+        <div class="tag">agent · javaagent 挂载</div>
+        <div class="name">运行中的单体</div>
+        <ul><li>ByteBuddy 插桩业务方法</li><li>enter/exit 记录调用</li></ul>
+      </div>
+      <div class="arrow">→</div>
+      <div class="stage st-file">
+        <div class="tag">产物</div>
+        <div class="name">trace.log</div>
+        <ul><li>按 HTTP 入口切用例</li><li>调用链时间序列</li></ul>
+      </div>
+      <div class="arrow">→</div>
+      <div class="stage st-core">
+        <div class="tag">core · TraceAnalyzer</div>
+        <div class="name">轨迹解析</div>
+        <ul><li>线程交织切分用例</li><li>重建动态调用图</li></ul>
+      </div>
+      <div class="arrow" style="flex:1">⟶ 融合进 partition 的双图权重 ⟶</div>
+    </div>
+
+    <div class="lane">
+      <div class="lane-label">交互支线</div>
+      <div class="stage st-web">
+        <div class="tag">web · 本地控制台 :8080</div>
+        <div class="name">Spring Boot + D3 力导向图</div>
+        <ul><li>加载 analysis / partition</li><li>拖拽类 → 调整分区</li><li>指标实时重算（通信占比/规模/跨度）</li><li>页面直接触发 generate</li></ul>
+      </div>
+      <div class="arrow">⇄</div>
+      <div class="stage st-file">
+        <div class="tag">读写</div>
+        <div class="name">analysis.json / partition.json</div>
+        <ul><li>人工微调结果回写</li><li>与 CLI 流水线无缝衔接</li></ul>
+      </div>
+    </div>
+
+  </div>
+  <div class="down-note">cli 模块（picocli）是上面所有阶段统一的人口：<code>m2m analyze | partition | trace | generate</code>；web 是同一条数据链的可视化入口。</div>
+
+  <!-- ══════════ 二、五模块 ══════════ -->
+  <h2>二、五个 Maven 模块的职责边界</h2>
+  <div class="cards">
+    <div class="card core">
+      <h3>monogomicro-core（无框架纯库）</h3>
+      <div class="role">所有算法的家：解析、图、分区、指标、报告</div>
+      <div class="classes">
+        <code>ProjectScanner</code> JavaParser 符号解析，扫出类与依赖边<br>
+        <code>MavenClasspathResolver</code> 调 mvn 拿依赖 jar 供符号求解<br>
+        <code>DependencyGraph</code> 加权有向图（邻接表）<br>
+        <code>TraceAnalyzer</code> 轨迹 → 业务用例 → 动态权重<br>
+        <code>LouvainPartitioner</code> 社区发现（手写两阶段）<br>
+        <code>AnnealingRefiner</code> 模拟退火多目标精化<br>
+        <code>SharedKernelDetector</code> 高扇入跨社区类剥离<br>
+        <code>JsonIO / ConsoleReporter</code> 报告读写
+      </div>
+    </div>
+    <div class="card agent">
+      <h3>monogomicro-agent（shade fat jar）</h3>
+      <div class="role">运行时轨迹采集探针</div>
+      <div class="classes">
+        <code>TraceAgent.premain</code> ByteBuddy Advice 织入 enter/exit<br>
+        <code>TraceRecorder</code> 线程本地缓冲落盘（低开销）<br>
+        挂载方式：<code>-javaagent:agent.jar=out=…,include=…,entry=…</code>
+      </div>
+    </div>
+    <div class="card codegen">
+      <h3>monogomicro-codegen</h3>
+      <div class="role">分区 → 可编译的微服务工程</div>
+      <div class="classes">
+        <code>MicroserviceGenerator</code> 编排：骨架/闭包/提升/迁移<br>
+        <code>RpcBridgeGenerator</code> 跨服务调用改写为 REST 双端<br>
+        <code>PomReader</code> 读取原单体 pom 抽依赖元信息
+      </div>
+    </div>
+    <div class="card cli">
+      <h3>monogomicro-cli（fat jar → m2m.jar）</h3>
+      <div class="role">唯一入口，把四阶段串成命令行产品</div>
+      <div class="classes">
+        <code>Main</code> picocli 四个子命令<br>
+        analyze / partition / trace / generate<br>
+        各命令只做「参数 → core/codegen → JSON 落盘」的胶水
+      </div>
+    </div>
+    <div class="card web">
+      <h3>monogomicro-web（Spring Boot 3）</h3>
+      <div class="role">本地可视化控制台（薄 REST + 单页）</div>
+      <div class="classes">
+        <code>WorkspaceController</code> load / state / move / generate<br>
+        <code>ConsoleState</code> 会话内分区状态与指标重算<br>
+        <code>static/index.html</code> D3 v7 力导向图 + 拖拽
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ 三、技术栈 ══════════ -->
+  <h2>三、技术选型：每个技术解决什么问题</h2>
+  <table>
+    <tr><th>技术</th><th>所在模块</th><th>作用 & 为什么选它</th></tr>
+    <tr class="tech-group"><td colspan="3">解析与图</td></tr>
+    <tr><td>JavaParser 3.26 + Symbol Solver</td><td>core</td><td>把 Java 源码解析成 AST 并做<b>符号级类型解析</b>（不是文本匹配）。CombinedTypeSolver 组合三种求解器：ReflectionTypeSolver（JDK 类）+ JavaParserTypeSolver（项目源码）+ JarTypeSolver×N（依赖 jar）。继承/泛型参数/字段注解/枚举/@interface/类字面量/varargs 全覆盖，且每条边带来源行号——审计级精度是分区质量的地基。</td></tr>
+    <tr><td>MavenInvoker（mvn build-classpath）</td><td>core</td><td>不重复造轮子：直接调 <code>mvn dependency:build-classpath</code> 拿依赖 jar 列表，喂给 JarTypeSolver，解决「字段类型声明在依赖 jar 里」的符号解析。</td></tr>
+    <tr><td>Louvain 社区发现（手写）</td><td>core</td><td>图聚类经典算法：局部移动 + 图聚合两阶段循环，最大化模度 Q。对 980 条边的规模毫秒级出结果，先给出「天然社团结构」的粗解。</td></tr>
+    <tr><td>模拟退火（手写）</td><td>core</td><td>Louvain 只优化模度单一目标；退火在它的解上继续优化<b>业务多目标</b>：0.5·跨服务通信占比 + 0.3·用例跨度（Mono2Micro 核心洞察）+ 0.2·规模失衡度。接受劣解的概率扰动避免陷入局部最优。</td></tr>
+    <tr class="tech-group"><td colspan="3">运行时采集</td></tr>
+    <tr><td>ByteBuddy 1.15 + Java Instrumentation</td><td>agent</td><td>premain 阶段对业务类做 Advice 织入（方法 enter/exit 各插一行记录）。不改一行目标项目源码、无侵入。相比手写字节码或 CGLIB，Advice API 以字符串模板方式织入，版本升级兼容性好。TraceRecorder 线程本地缓冲后落盘，开销可控。</td></tr>
+    <tr class="tech-group"><td colspan="3">工程生成</td></tr>
+    <tr><td>字符串模板代码生成</td><td>codegen</td><td>微服务 pom / RPC 客户端 / Controller 桥全部模板化生成。铁律：服务间禁止类级依赖——跨服务引用要么提升进 common，要么走 REST 桥；内核依赖闭包展开，保证生成物<b>开箱 mvn compile 通过</b>。</td></tr>
+    <tr class="tech-group"><td colspan="3">粘合与交付</td></tr>
+    <tr><td>picocli 4.7</td><td>cli</td><td>声明式子命令 + 类型安全选项 + 自动 --help。四个子命令对应流水线四阶段，零样板代码。</td></tr>
+    <tr><td>Jackson 2.17</td><td>core</td><td>analysis.json / partition.json 的读写。JSON 作为阶段间数据契约，任何阶段可独立重跑、可被 web 复用。</td></tr>
+    <tr><td>Spring Boot 3.3（仅 web 模块）</td><td>web</td><td>只做薄 REST 层（4 个端点）+ 静态页托管。刻意不让 core 依赖任何框架——core 是可复用的纯算法库。</td></tr>
+    <tr><td>D3.js v7</td><td>web 前端</td><td>力导向图渲染分区结果，节点可拖拽到别的服务、指标实时重算——「人在环」的分区编辑器。</td></tr>
+    <tr><td>Maven Shade</td><td>agent / cli</td><td>打成可执行 fat jar：agent 需要独立成 jar 才能被 -javaagent 挂载；cli 产出单文件 m2m.jar。</td></tr>
+    <tr><td>SLF4J + JUnit 5</td><td>全部</td><td>门面日志（core 只依赖 API，绑定留给使用方）；5 个单测覆盖 Louvain 双簇/单社区/空图与轨迹交织解析。</td></tr>
+  </table>
+
+  <!-- ══════════ 四、算法细节 ══════════ -->
+  <h2>四、关键算法速查</h2>
+  <div class="algo">
+    <b>边权重</b>：继承 3 / 字段 2 / 方法调用·参数·注解·构造 1（按语义强度）<br>
+    <b>双图融合</b>：<span class="formula">w = α·静态/max(静态) + β·动态/max(动态)</span>（默认 0.5/0.5），<b>×1000 取整</b>——否则小数权重被整型截断成 0，图直接失联（实测踩过的坑）<br>
+    <b>Louvain</b>：随机序遍历节点 → 移到模度增益最大社区 → 收敛后图聚合（节点=社区）→ 下一层；层级结果还原成类 → 社区映射<br>
+    <b>退火目标</b>：<span class="formula">0.5·跨服务通信占比 + 0.3·用例跨度 + 0.2·规模失衡度</span>，温度逐降，劣解按 <span class="formula">e^(-Δ/T)</span> 概率接受<br>
+    <b>共享内核</b>：扇入高且横跨 ≥3 社区的类判为共享 → 剥离进 common；生成期再做内核依赖闭包 + 跨服务共享类提升，兜住「服务间禁止类级依赖」的铁律
+  </div>
+</div>
+</body>
+</html>
