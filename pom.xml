@@ -6,7 +6,7 @@
 
     <groupId>io.github.iztou</groupId>
     <artifactId>monogomicro-parent</artifactId>
-    <version>0.1.0</version>
+    <version>0.2.0</version>
     <packaging>pom</packaging>
     <name>monoGomicro</name>
     <description>Java 单体应用微服务拆分建议工具（Mono2Micro 复刻）</description>

@@ -18,11 +18,20 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.Callable;
 
-@Command(name = "m2m", mixinStandardHelpOptions = true, version = "m2m 1.0.0",
+@Command(name = "m2m", mixinStandardHelpOptions = true,
+        versionProvider = Main.VersionProvider.class,
         description = "monoGomicro：Java 单体应用微服务拆分建议工具（Mono2Micro 复刻）",
         subcommands = {Main.AnalyzeCommand.class, Main.PartitionCommand.class,
                 Main.TraceCommand.class, Main.GenerateCommand.class})
 public final class Main implements Callable<Integer> {
+
+    /** 版本号读 jar manifest 的 Implementation-Version（Maven ${project.version} 注入）。 */
+    public static class VersionProvider implements CommandLine.IVersionProvider {
+        @Override
+        public String[] getVersion() {
+            return new String[]{"m2m " + com.monogomicro.core.Versions.get()};
+        }
+    }
 
     public static void main(String[] args) {
         int exit = new CommandLine(new Main())

@@ -126,7 +126,7 @@ slf4j → simple 绑定输出到 **stderr**。
 
 ## 6. 工具目录（核心设计）
 
-三层共 **16 个工具 + 2 个 resource**。命名统一 `snake_case`；所有入参出参为 JSON 对象。
+三层共 **15 个工具 + 2 个 resource**。命名统一 `snake_case`；所有入参出参为 JSON 对象。
 注册时附带 MCP 工具 annotations（观察层标 `readOnlyHint`，`generate_services` 标
 `destructiveHint`——客户端会自动给写盘操作加确认 UI）与 outputSchema（结构化输出，
 客户端可校验渲染，比纯文本 JSON 稳）。

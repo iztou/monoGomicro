@@ -142,7 +142,7 @@ public final class McpServerMain {
     private static <S extends McpServer.SyncSpecification<S>> McpServer.SyncSpecification<S> register(
             McpServer.SyncSpecification<S> spec) {
         McpServerMain mcp = new McpServerMain();
-        return spec.serverInfo("monogomicro", "1.0.0")
+        return spec.serverInfo("monogomicro", com.monogomicro.core.Versions.get())
                 .tools(mcp.toolSpecs())
                 .resources(mcp.resourceSpecs());
     }
