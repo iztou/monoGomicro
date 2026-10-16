@@ -184,8 +184,11 @@ public class RpcBridgeGenerator {
             sb.append("        Object result = restTemplate.postForObject(").append(url)
                     .append(", null, Object.class);\n");
         } else if (m.paramTypes().size() == 1) {
+            // 与桥端 @RequestBody Map 契约对齐：参数包装成 {"p0": value}，
+            // 裸值会被 RestTemplate 以 text/plain 发出，桥端 415
             sb.append("        Object result = restTemplate.postForObject(").append(url)
-                    .append(", ").append(m.paramNames().get(0)).append(", Object.class);\n");
+                    .append(", java.util.Map.of(\"p0\", ").append(m.paramNames().get(0))
+                    .append("), Object.class);\n");
         } else {
             sb.append("        java.util.Map<String, Object> body = new java.util.HashMap<>();\n");
             for (int i = 0; i < m.paramNames().size(); i++) {
@@ -232,9 +235,14 @@ public class RpcBridgeGenerator {
         sb.append("    @Autowired\n    private ").append(simpleName(req.providerInterfaceFqcn)).append(" service;\n\n");
         for (var m : methods) {
             boolean isVoid = "void".equals(m.returnType());
-            sb.append("    @PostMapping(\"/").append(m.name()).append("\")\n");
-            sb.append("    public Object ").append(m.name()).append("(@RequestBody java.util.Map<String, Object> body) {\n");
-            sb.append(isVoid ? "        service." : "        return service.").append(m.name()).append("(");
+            // produces + 显式 JSON 序列化：裸 String 返回值会被 StringHttpMessageConverter
+            // 以非 JSON 形态输出，客户端 Jackson 反序列化必炸
+            sb.append("    @PostMapping(value = \"/").append(m.name())
+                    .append("\", produces = \"application/json\")\n");
+            sb.append("    public String ").append(m.name())
+                    .append("(@RequestBody java.util.Map<String, Object> body) throws Exception {\n");
+            sb.append(isVoid ? "        service." : "        return MAPPER.writeValueAsString(service.")
+                    .append(m.name()).append("(");
             for (int i = 0; i < m.paramTypes().size(); i++) {
                 if (i > 0) {
                     sb.append(", ");
@@ -245,7 +253,7 @@ public class RpcBridgeGenerator {
                 sb.append("(").append(castType).append(") convert(body.get(\"p")
                         .append(i).append("\"), ").append(classArg).append(")");
             }
-            sb.append(");\n");
+            sb.append(isVoid ? ");\n" : "));\n"); // 非 void 多一层 writeValueAsString( 的闭合
             if (isVoid) {
                 sb.append("        return null;\n");
             }

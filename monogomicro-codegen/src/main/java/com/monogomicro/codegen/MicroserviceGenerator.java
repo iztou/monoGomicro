@@ -573,18 +573,27 @@ public class MicroserviceGenerator {
             String providerSimple = providerFqcn.substring(providerFqcn.lastIndexOf('.') + 1);
             String clientSimple = providerSimple + "Client";
             String clientImport = commonPackagePrefix() + ".client." + clientSimple;
-            boolean fieldRewritten = false;
+            boolean touched = false;
             for (com.github.javaparser.ast.body.FieldDeclaration field
                     : cu.findAll(com.github.javaparser.ast.body.FieldDeclaration.class)) {
                 String typeStr = field.getElementType().asString();
                 if (providerSimple.equals(rawTypeName(typeStr))) {
                     field.getVariable(0).setType(clientSimple);
-                    fieldRewritten = true;
-                    result.getRewrittenInjections().add(consumerFqcn + " 中 " + providerSimple
-                            + " -> " + clientSimple);
+                    touched = true;
                 }
             }
-            if (fieldRewritten) {
+            // 构造器/方法/lambda 参数类型同步改写——构造器注入（Spring 推荐风格）只改字段必炸编译
+            for (com.github.javaparser.ast.body.Parameter param
+                    : cu.findAll(com.github.javaparser.ast.body.Parameter.class)) {
+                String typeStr = param.getType().asString();
+                if (providerSimple.equals(rawTypeName(typeStr))) {
+                    param.setType(clientSimple);
+                    touched = true;
+                }
+            }
+            if (touched) {
+                result.getRewrittenInjections().add(consumerFqcn + " 中 " + providerSimple
+                        + " -> " + clientSimple);
                 cu.addImport(clientImport);
                 // 原接口的 import 指向别的服务里的类，残留必炸编译——移除
                 cu.getImports().removeIf(imp -> imp.getNameAsString().equals(providerFqcn)
@@ -767,16 +776,34 @@ public class MicroserviceGenerator {
         sb.append("    </parent>\n");
         sb.append("    <artifactId>").append(xml(artifact)).append("</artifactId>\n");
         sb.append("    <dependencies>\n").append(depsXml).append("    </dependencies>\n");
+        // -parameters：Spring Boot 3.2+ 的 @RequestParam/@PathVariable 依赖参数名反射，
+        // 没有它所有 Controller 运行时炸 IllegalArgumentException（spring-boot-starter-parent
+        // 默认开启，但生成工程无 parent 继承，必须自带）
+        sb.append("    <build>\n        <plugins>\n");
+        sb.append("            <plugin>\n");
+        sb.append("                <groupId>org.apache.maven.plugins</groupId>\n");
+        sb.append("                <artifactId>maven-compiler-plugin</artifactId>\n");
+        sb.append("                <version>3.13.0</version>\n");
+        sb.append("                <configuration><parameters>true</parameters></configuration>\n");
+        sb.append("            </plugin>\n");
         if (bootPlugin) {
             String pluginVersion = springBootPluginVersion();
-            sb.append("    <build>\n        <plugins>\n            <plugin>\n");
+            sb.append("            <plugin>\n");
             sb.append("                <groupId>org.springframework.boot</groupId>\n");
             sb.append("                <artifactId>spring-boot-maven-plugin</artifactId>\n");
             if (pluginVersion != null) {
                 sb.append("                <version>").append(xml(pluginVersion)).append("</version>\n");
             }
-            sb.append("            </plugin>\n        </plugins>\n    </build>\n");
+            // 显式绑定 repackage：无 parent 继承时插件不自动执行，产物是薄 jar，
+            // java -jar 报"没有主清单属性"
+            sb.append("                <executions>\n");
+            sb.append("                    <execution>\n");
+            sb.append("                        <goals><goal>repackage</goal></goals>\n");
+            sb.append("                    </execution>\n");
+            sb.append("                </executions>\n");
+            sb.append("            </plugin>\n");
         }
+        sb.append("        </plugins>\n    </build>\n");
         sb.append("</project>\n");
         Files.writeString(moduleDir.resolve("pom.xml"), sb.toString(), StandardCharsets.UTF_8);
     }

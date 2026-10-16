@@ -120,8 +120,12 @@ npx @modelcontextprotocol/inspector java -jar monogomicro-mcp/target/m2m-mcp.jar
 - 事务/锁/反射跨服务边界的语义保持无法全自动，全部列入 MIGRATION.md
 - 客户端返回值强转依赖 JSON 反序列化，关键接口上线前建议补显式 DTO
 - 运行时分析质量取决于用例覆盖度；纯静态模式是保底
-- 目标栈为 Spring Boot（原版是 Open Liberty）
-- 运行生成的服务需要数据库与配置迁移（本工具负责编译级正确 + 迁移清单）
+- 目标栈为 Spring Boot（原版是 Open Liberty）；依赖管理须显式声明
+  （根 pom 带 `dependencyManagement`/BOM——RuoYi 式写法；纯 parent 继承式管理的单体
+  生成工程会缺 BOM 版本，需手工补）
+- 运行生成的服务需要数据库与配置迁移（本工具负责编译级正确 + 迁移清单；
+  RPC 桥运行级正确由 `codegen` 的 failsafe 集成测试守护：生成工程 install →
+  双服务启动 → HTTP 断言桥贯通）
 
 ## 测试
 
