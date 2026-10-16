@@ -251,6 +251,7 @@ EMPTY ──analyze_project──▶ ANALYZED ──compute_partition──▶ P
 | E_PKG_NO_MATCH | 包前缀在项目中无匹配类 | 列出项目中实际出现的前两级包名供修正 |
 | E_MAVEN_MISSING | useMavenClasspath=true 且 mvn 不在 PATH | 重试时置 false |
 | E_PARSE_FAILED / E_TRACE_FORMAT | 解析失败 | 附文件/行号/样例行 |
+| E_SCAN_LIMIT | 源文件数/边数超防御上限（core `ProjectScanner` 已实现） | 确认 projectDir 指向单体而非过大目录；超大项目说明可调上限构造参数 |
 | E_UNKNOWN_CLASS / E_UNKNOWN_SERVICE / E_NOTHING_TO_UNDO | 编辑类参数错 | 给出相近候选（前缀匹配） |
 | E_OUTPUT_EXISTS / E_OUT_OF_WORKSPACE | 生成写盘越界/冲突 | 说明 overwrite 语义 |
 | E_INTERNAL | 兜底 | 附异常摘要 + stderr 日志位置 |
@@ -292,7 +293,9 @@ EMPTY ──analyze_project──▶ ANALYZED ──compute_partition──▶ P
    `dryRun=false` + 目标目录已存在且非空时 `overwrite=true`。
 3. **进程外命令固定**：仅 `MavenClasspathResolver` 固定调 `mvn dependency:build-classpath`，
    无任意命令拼接；路径参数不经 shell。
-4. **资源上限**：分析文件数上限（如 20k 源文件）与边数上限，超出报 `E_INTERNAL` 附说明，防误指根目录全盘扫。
+4. **资源上限**：分析文件数上限（默认 20k 源文件）与边数上限（默认 500k），超出报 `E_SCAN_LIMIT`
+   附说明（M0 已在 core `ProjectScanner` 落地，构造参数可调），防误指根目录全盘扫。
+   边数检查依赖 `DependencyGraph.edgeCount()` 的 O(1) 计数器实现，扫描主循环内逐单元检查无性能负担。
 5. **不回读敏感文件**：工具只暴露图数据与源码路径，不返回文件内容。
 
 ## 13. 测试策略

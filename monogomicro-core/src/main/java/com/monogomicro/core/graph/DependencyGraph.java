@@ -17,6 +17,9 @@ public class DependencyGraph {
     private final Map<String, ClassInfo> nodes = new TreeMap<>();
     /** from -> (to -> edge) */
     private final Map<String, Map<String, DependencyEdge>> adjacency = new LinkedHashMap<>();
+    /** 边数计数器：edgeCount() 必须 O(1)——扫描上限检查在每个解析单元后调用，
+     *  若每次重建边列表，接近上限的大项目会累积 O(单元数 × 边数) 的开销。 */
+    private int edgeCount;
 
     public void addNode(ClassInfo info) {
         nodes.put(info.getFqcn(), info);
@@ -48,9 +51,14 @@ public class DependencyGraph {
         if (from.equals(to)) {
             return; // 自环对分区无意义
         }
-        adjacency.computeIfAbsent(from, k -> new LinkedHashMap<>())
-                .computeIfAbsent(to, k -> new DependencyEdge(from, to))
-                .addOccurrence(kind, sample);
+        Map<String, DependencyEdge> m = adjacency.computeIfAbsent(from, k -> new LinkedHashMap<>());
+        DependencyEdge edge = m.get(to);
+        if (edge == null) {
+            edge = new DependencyEdge(from, to);
+            m.put(to, edge);
+            edgeCount++;
+        }
+        edge.addOccurrence(kind, sample);
     }
 
     public List<DependencyEdge> edges() {
@@ -61,11 +69,15 @@ public class DependencyGraph {
 
     /** 从持久化数据整体装入一条聚合边 */
     public void putEdge(DependencyEdge edge) {
-        adjacency.computeIfAbsent(edge.getFrom(), k -> new LinkedHashMap<>()).put(edge.getTo(), edge);
+        Map<String, DependencyEdge> m = adjacency.computeIfAbsent(edge.getFrom(), k -> new LinkedHashMap<>());
+        if (!m.containsKey(edge.getTo())) {
+            edgeCount++;
+        }
+        m.put(edge.getTo(), edge);
     }
 
     public int edgeCount() {
-        return edges().size();
+        return edgeCount;
     }
 
     /** from 的出边（from 依赖了谁） */
