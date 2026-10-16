@@ -108,6 +108,22 @@ slf4j → simple 绑定输出到 **stderr**。
 
 版本策略：SDK 走 `0.x` 快线，`pom` 中单独 property 管理，锁定具体版本；升级只影响传输注册层。
 
+### 5.1 双传输形态（2026-10-16 落地）
+
+默认 **stdio**（子进程，本地一对一）；`--http [--host h] [--port p]` 切换 **Streamable HTTP**
+（MCP 2025-03-26 规范：`POST /mcp` 承载 JSON-RPC，响应可 SSE 流式，`Mcp-Session-Id` 头维持会话），
+内嵌 Jetty 12（ee10）承载 SDK 的 `HttpServletStreamableServerTransportProvider`。要点：
+
+- 工具/资源注册与 stdio 完全同构（两条 specification 共用 `SyncSpecification` 基类链）——当初"SDK 胶水与工具实现解耦"的直接收益；
+- HTTP 形态语义是**团队内网共享单工作区**：所有连接共享同一个 `WorkspaceSession`（状态机/undo 栈/生成缓存），后连者可见先前分析——刻意不做多工作区隔离；
+- 安全：默认绑定 `127.0.0.1`；`LoopbackHostValidator`（SDK 的 `securityValidator` 钩子）做 Host 头白名单，防 DNS rebinding；
+- 契约测试 `McpHttpIT` 与 `McpServerIT` 互补：同一套工具注册，两条传输各锁一遍协议层。
+
+已知坑（实测踩过）：SDK 的 SSE 响应只在 JSON **首行**前写 `data: ` 前缀，INDENT_OUTPUT 的
+多行 JSON 本体原样跟随直到空行（事件边界）——自定义客户端解析须按事件边界收集，逐行找
+`data:` 前缀只会拿到 `{`。另：`java.net.http` 的 `BodyHandlers.ofString` 对该 chunked SSE 流
+的行为在 failsafe 环境与独立 JVM 表现不一致，测试客户端用裸 socket 读完整响应更可靠。
+
 ## 6. 工具目录（核心设计）
 
 三层共 **16 个工具 + 2 个 resource**。命名统一 `snake_case`；所有入参出参为 JSON 对象。

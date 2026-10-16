@@ -4,34 +4,83 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.monogomicro.core.M2mException;
 import com.monogomicro.core.report.JsonIO;
 import io.modelcontextprotocol.json.McpJsonDefaults;
+import io.modelcontextprotocol.json.jackson2.JacksonMcpJsonMapper;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServer;
+import io.modelcontextprotocol.server.transport.HttpServletStreamableServerTransportProvider;
+import io.modelcontextprotocol.server.transport.ServerTransportSecurityException;
+import io.modelcontextprotocol.server.transport.ServerTransportSecurityValidator;
 import io.modelcontextprotocol.server.transport.StdioServerTransportProvider;
 import io.modelcontextprotocol.spec.McpSchema;
+import org.eclipse.jetty.ee10.servlet.ServletContextHandler;
+import org.eclipse.jetty.ee10.servlet.ServletHolder;
+import org.eclipse.jetty.server.Server;
+import org.eclipse.jetty.server.ServerConnector;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 
 /**
- * MCP server 入口（stdio 传输）。
+ * MCP server 入口，双传输形态：
+ * <ul>
+ *   <li>默认 stdio（子进程，本地一对一，Claude Desktop / IDE 场景）；</li>
+ *   <li>{@code --http [--host h] [--port p]}：MCP Streamable HTTP（{@code POST /mcp}），
+ *       内嵌 Jetty 常驻服务，团队内网共享场景。HTTP 形态下所有连接共享同一个
+ *       {@link WorkspaceSession}（单工作区语义，后连接者可见先前的分析/分区）。</li>
+ * </ul>
  *
- * 纪律：stdout 是 JSON-RPC 通道——本模块严禁 System.out；日志走 slf4j-simple（默认输出 stderr）。
+ * 纪律：stdio 形态的 stdout 是 JSON-RPC 通道——本类严禁 System.out；日志走 slf4j-simple（默认输出 stderr）。
  * 工具实现集中在 {@link McpTools}（纯 Java）；本类只做参数装配、调用与结果序列化。
  * 结果同时给 structuredContent 与文本 JSON（双通道，兼容新旧客户端）。
  */
 public final class McpServerMain {
+
+    private static final Logger log = LoggerFactory.getLogger(McpServerMain.class);
 
     private static final Map<String, Object> OUTPUT_SCHEMA = Map.of("type", "object");
 
     private final WorkspaceSession session = new WorkspaceSession();
     private final McpTools tools = new McpTools(session);
 
-    public static void main(String[] args) throws InterruptedException {
+    /** 启动参数（--http / --host / --port），默认 stdio + 127.0.0.1:8082。 */
+    record Options(boolean http, String host, int port) {
+        static Options parse(String[] args) {
+            boolean http = false;
+            String host = "127.0.0.1";
+            int port = 8082;
+            for (int i = 0; i < args.length; i++) {
+                switch (args[i]) {
+                    case "--http" -> http = true;
+                    case "--host" -> host = args[++i];
+                    case "--port" -> port = Integer.parseInt(args[++i]);
+                    default -> throw new IllegalArgumentException(
+                            "未知参数：" + args[i] + "（支持 --http --host <h> --port <p>）");
+                }
+            }
+            return new Options(http, host, port);
+        }
+    }
+
+    public static void main(String[] args) throws Exception {
+        Options opts = Options.parse(args);
+        if (opts.http()) {
+            startHttp(opts);
+        } else {
+            startStdio();
+        }
+    }
+
+    private static void startStdio() throws InterruptedException {
         McpSyncServer server = build(new StdioServerTransportProvider(McpJsonDefaults.getMapper()));
         CountDownLatch stop = new CountDownLatch(1);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -42,14 +91,89 @@ public final class McpServerMain {
         stop.await();
     }
 
-    /** 组装 server（工具 + 资源）；transport 注入，契约测试可用管道流驱动同一条链路。 */
+    private static void startHttp(Options opts) throws Exception {
+        HttpServletStreamableServerTransportProvider provider =
+                HttpServletStreamableServerTransportProvider.builder()
+                        .jsonMapper(new JacksonMcpJsonMapper(JsonIO.mapper()))
+                        .mcpEndpoint("/mcp")
+                        .keepAliveInterval(Duration.ofSeconds(30))
+                        // 本地/内网服务防 DNS rebinding：Host 头必须是监听地址或 loopback
+                        .securityValidator(new LoopbackHostValidator(opts.host(), opts.port()))
+                        .build();
+        McpSyncServer server = buildHttp(provider);
+
+        ServletContextHandler context = new ServletContextHandler();
+        context.setContextPath("/");
+        context.addServlet(new ServletHolder(provider), "/mcp");
+        Server jetty = new Server();
+        ServerConnector connector = new ServerConnector(jetty);
+        connector.setHost(opts.host());
+        connector.setPort(opts.port());
+        jetty.addConnector(connector);
+        jetty.setHandler(context);
+
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try {
+                jetty.stop();
+            } catch (Exception e) {
+                log.warn("Jetty 停止异常: {}", e.toString());
+            }
+            server.closeGracefully();
+            provider.closeGracefully();
+        }));
+        jetty.start();
+        log.info("monogomicro MCP HTTP 监听 http://{}:{}/mcp（单工作区，所有连接共享状态）；"
+                        + "默认字符集 {}（非 UTF-8 时中文输出可能错位，建议 -Dfile.encoding=UTF-8）",
+                opts.host(), opts.port(), java.nio.charset.Charset.defaultCharset());
+        jetty.join();
+    }
+
+    /** 组装 server（stdio 路径）；transport 注入，契约测试可用管道流驱动同一条链路。 */
     static McpSyncServer build(StdioServerTransportProvider transport) {
+        return register(McpServer.sync(transport)).build();
+    }
+
+    /** 组装 server（Streamable HTTP 路径），工具/资源注册与 stdio 完全同构。 */
+    static McpSyncServer buildHttp(HttpServletStreamableServerTransportProvider transport) {
+        return register(McpServer.sync(transport)).build();
+    }
+
+    /** 工具 + 资源注册的公共装配（stdio 与 HTTP 两种 specification 共用此基类链）。 */
+    private static <S extends McpServer.SyncSpecification<S>> McpServer.SyncSpecification<S> register(
+            McpServer.SyncSpecification<S> spec) {
         McpServerMain mcp = new McpServerMain();
-        return McpServer.sync(transport)
-                .serverInfo("monogomicro", "1.0.0")
+        return spec.serverInfo("monogomicro", "1.0.0")
                 .tools(mcp.toolSpecs())
-                .resources(mcp.resourceSpecs())
-                .build();
+                .resources(mcp.resourceSpecs());
+    }
+
+    /**
+     * Host 头白名单校验（MCP 规范对本地 HTTP server 的 DNS rebinding 防护要求）：
+     * 只放行监听地址与 loopback 变体（带端口与不带端口两种形式）。
+     */
+    static final class LoopbackHostValidator implements ServerTransportSecurityValidator {
+        private final Set<String> allowed;
+
+        LoopbackHostValidator(String bindHost, int port) {
+            Set<String> hosts = new HashSet<>();
+            for (String h : new String[]{bindHost, "127.0.0.1", "localhost", "[::1]"}) {
+                hosts.add(h + ":" + port);
+                hosts.add(h);
+            }
+            this.allowed = Set.copyOf(hosts);
+        }
+
+        @Override
+        public void validateHeaders(Map<String, List<String>> headers) throws ServerTransportSecurityException {
+            String host = headers.entrySet().stream()
+                    .filter(e -> e.getKey().equalsIgnoreCase("host"))
+                    .flatMap(e -> e.getValue().stream())
+                    .findFirst().orElse(null);
+            if (host == null || !allowed.contains(host.toLowerCase())) {
+                throw new ServerTransportSecurityException(403,
+                        "Host 头不在允许清单（防 DNS rebinding）：" + host);
+            }
+        }
     }
 
     // ---------- 工具注册 ----------

@@ -83,8 +83,9 @@ java -jar monogomicro-web/target/monogomicro-web.jar
 
 ## MCP 模式（LLM 在环）
 
-`monogomicro-mcp` 把流水线暴露为 [MCP](https://modelcontextprotocol.io) server（stdio 传输），
-Claude Desktop / 任意 MCP 客户端可对话式完成「分析 → 摘要 → 追问归属依据 → 移动类看指标变化 → 撤销」：
+`monogomicro-mcp` 把流水线暴露为 [MCP](https://modelcontextprotocol.io) server，
+默认 stdio 传输，Claude Desktop / 任意 MCP 客户端可对话式完成「分析 → 摘要 → 追问归属依据 →
+移动类看指标变化 → 撤销」：
 
 ```json
 // Claude Desktop -> Settings -> Developer -> Edit Config (claude_desktop_config.json)
@@ -98,6 +99,13 @@ Claude Desktop / 任意 MCP 客户端可对话式完成「分析 → 摘要 → 
 }
 ```
 
+团队内网共享可用 HTTP 传输（Streamable HTTP，多客户端共享同一工作区状态）：
+
+```bash
+java -jar monogomicro-mcp/target/m2m-mcp.jar --http --port 8082   # 默认 127.0.0.1，POST /mcp
+# 客户端配置 type: "http" + url: http://127.0.0.1:8082/mcp
+```
+
 工具一览（15 个）：`analyze_project` / `load_workspace` / `ingest_trace` / `compute_partition` /
 `generate_services`（默认 dry-run）/ `save_partition`（流水线）；`get_partition_summary` /
 `list_classes` / `get_class_info` / `find_classes` / `get_metrics` / `get_migration_items`
@@ -105,7 +113,7 @@ Claude Desktop / 任意 MCP 客户端可对话式完成「分析 → 摘要 → 
 `undo`（编辑）。另有资源 `m2m://analysis`、`m2m://partition` 供客户端按需拉取大对象。
 错误统一结构化（`{code, message, hint}`，拼错类名/服务 id 附相近候选）；写路径限制在 workspace 根内；
 `analyze_project` 支持进度通知（客户端传 `_meta.progressToken` 即每 50 个源文件收到进度）。
-设计文档见 `docs/mcp-design.md`；契约测试（真子进程 stdio JSON-RPC 全链路）随 `mvn verify` 运行。
+设计文档见 `docs/mcp-design.md`；契约测试（真子进程 stdio + HTTP 两条传输的 JSON-RPC 全链路）随 `mvn verify` 运行。
 
 调试与体验：用官方 Inspector 图形化调用全部工具——
 
