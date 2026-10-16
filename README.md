@@ -1,5 +1,9 @@
 # monoGomicro
 
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.iztou/monogomicro-parent.svg?label=Maven%20Central)](https://central.sonatype.com/artifact/io.github.iztou/monogomicro-mcp)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+![Java](https://img.shields.io/badge/Java-17%2B-blue)
+
 Java 单体应用 → 微服务拆分建议工具（IBM Mono2Micro 的开源复刻）。
 
 输入一个 Java/Maven 单体项目，输出：微服务分区建议（可交互编辑）、共享内核识别、
@@ -26,6 +30,30 @@ monogomicro-codegen   分区 → 微服务工程生成（源码改写）
 monogomicro-cli       m2m 命令行（analyze / partition / trace / generate）
 monogomicro-web       本地控制台（Spring Boot 薄 REST + D3 单页）
 ```
+
+## 安装
+
+构件发布在 [Maven Central](https://central.sonatype.com/artifact/io.github.iztou/monogomicro-mcp)（`io.github.iztou`，0.1.0+）：
+
+```bash
+# Homebrew（macOS / Linuxbrew）
+brew install iztou/tap/m2m        # CLI：m2m analyze / partition / trace / generate
+brew install iztou/tap/m2m-mcp    # MCP server（stdio）
+
+# jbang 直跑（免克隆免 package，JDK 也由 jbang 自动供应）
+jbang io.github.iztou:monogomicro-cli:0.1.0 analyze /path/to/monolith -p com.your.pkg -o m2m-out
+```
+
+```xml
+<!-- 或作为 Maven 依赖（core 无框架纯库，可直接嵌入） -->
+<dependency>
+    <groupId>io.github.iztou</groupId>
+    <artifactId>monogomicro-core</artifactId>
+    <version>0.1.0</version>
+</dependency>
+```
+
+从源码构建见下方快速开始。
 
 ## 快速开始
 
