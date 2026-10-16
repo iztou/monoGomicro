@@ -1,0 +1,293 @@
+package com.monogomicro.mcp;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.monogomicro.core.M2mException;
+import com.monogomicro.core.report.JsonIO;
+import io.modelcontextprotocol.json.McpJsonDefaults;
+import io.modelcontextprotocol.server.McpServer;
+import io.modelcontextprotocol.server.McpServerFeatures;
+import io.modelcontextprotocol.server.McpSyncServer;
+import io.modelcontextprotocol.server.transport.StdioServerTransportProvider;
+import io.modelcontextprotocol.spec.McpSchema;
+
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+
+/**
+ * MCP server 入口（stdio 传输）。
+ *
+ * 纪律：stdout 是 JSON-RPC 通道——本模块严禁 System.out；日志走 slf4j-simple（默认输出 stderr）。
+ * 工具实现集中在 {@link McpTools}（纯 Java）；本类只做参数装配、调用与结果序列化。
+ * 结果同时给 structuredContent 与文本 JSON（双通道，兼容新旧客户端）。
+ */
+public final class McpServerMain {
+
+    private static final Map<String, Object> OUTPUT_SCHEMA = Map.of("type", "object");
+
+    private final WorkspaceSession session = new WorkspaceSession();
+    private final McpTools tools = new McpTools(session);
+
+    public static void main(String[] args) throws InterruptedException {
+        McpServerMain mcp = new McpServerMain();
+        McpSyncServer server = McpServer
+                .sync(new StdioServerTransportProvider(McpJsonDefaults.getMapper()))
+                .serverInfo("monogomicro", "1.0.0")
+                .tools(mcp.toolSpecs())
+                .build();
+        CountDownLatch stop = new CountDownLatch(1);
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            server.closeGracefully();
+            stop.countDown();
+        }));
+        // stdio 会话由 transport 线程驱动；主线程挂起等待进程退出（客户端关闭 stdin / 杀进程）
+        stop.await();
+    }
+
+    // ---------- 工具注册 ----------
+
+    private McpServerFeatures.SyncToolSpecification[] toolSpecs() {
+        List<McpServerFeatures.SyncToolSpecification> specs = new ArrayList<>();
+
+        specs.add(tool("analyze_project",
+                "静态分析目标单体项目，构建类级加权依赖图并载入会话。前置：无。后续：compute_partition。",
+                Map.of("type", "object",
+                        "properties", Map.of(
+                                "projectDir", Map.of("type", "string", "description", "单体项目根目录（绝对路径）"),
+                                "packagePrefixes", Map.of("type", "array", "items", Map.of("type", "string"),
+                                        "description", "业务包前缀，如 com.ruoyi"),
+                                "useMavenClasspath", Map.of("type", "boolean",
+                                        "description", "是否调 mvn 解析依赖 jar（默认 true，精度高但慢）"),
+                                "persistAnalysisPath", Map.of("type", "string",
+                                        "description", "可选：analysis.json 落盘路径")),
+                        "required", List.of("projectDir", "packagePrefixes")),
+                false,
+                        args -> tools.analyzeProject(
+                        Path.of(str(args, "projectDir")),
+                        strList(args, "packagePrefixes"),
+                        boolOr(args, "useMavenClasspath", true),
+                        pathOpt(args, "persistAnalysisPath"))));
+
+        specs.add(tool("load_workspace",
+                "从已有 analysis.json（可选 partition.json）载入会话；不带分区时自动计算一版纯静态分区。"
+                        + "projectDir 仅在后续要生成工程时必填（analyze 会话不需要）。",
+                Map.of("type", "object",
+                        "properties", Map.of(
+                                "analysisPath", Map.of("type", "string"),
+                                "partitionPath", Map.of("type", "string",
+                                        "description", "可选；缺省则自动分区"),
+                                "projectDir", Map.of("type", "string",
+                                        "description", "可选：单体项目根，generate 阶段需要")),
+                        "required", List.of("analysisPath")),
+                false,
+                        args -> tools.loadWorkspace(
+                        Path.of(str(args, "analysisPath")),
+                        pathOpt(args, "partitionPath"),
+                        pathOpt(args, "projectDir"))));
+
+        specs.add(tool("compute_partition",
+                "基于当前分析结果计算微服务分区（Louvain + 模拟退火）。前置：analyze_project 或 load_workspace。",
+                Map.of("type", "object",
+                        "properties", Map.of(
+                                "alpha", Map.of("type", "number", "description", "静态图权重占比，默认 0.5"),
+                                "beta", Map.of("type", "number", "description", "动态图权重占比，默认 0.5"),
+                                "minSize", Map.of("type", "integer", "description", "服务最小类数，默认 5"),
+                                "maxServices", Map.of("type", "integer", "description", "服务数上限，默认 12"),
+                                "seed", Map.of("type", "integer", "description", "随机种子，默认 42")),
+                        "required", List.of()),
+                false,
+                        args -> tools.computePartition(
+                        dblOr(args, "alpha", 0.5),
+                        dblOr(args, "beta", 0.5),
+                        intOr(args, "minSize", 5),
+                        intOr(args, "maxServices", 12),
+                        longOr(args, "seed", 42))));
+
+        specs.add(tool("get_partition_summary",
+                "分区概览：服务列表（id/名称/规模）、核心指标（跨服务通信占比 crossRatio、模度 modularity）、"
+                        + "共享内核大小。每轮对话的锚点，先看这个再看细节。",
+                Map.of("type", "object", "properties", Map.of(), "required", List.of()),
+                true,
+                        args -> tools.partitionSummary()));
+
+        specs.add(tool("list_classes",
+                "分页列出类清单。scope 取值：all / kernel / service:<id>（id 见 get_partition_summary）；"
+                        + "stereotype 可选过滤（CONTROLLER/SERVICE/SERVICE_IMPL/MAPPER/DOMAIN/UTIL/CONFIG/ASPECT/OTHER）。",
+                Map.of("type", "object",
+                        "properties", Map.of(
+                                "scope", Map.of("type", "string", "description", "all | kernel | service:<id>，默认 all"),
+                                "stereotype", Map.of("type", "string"),
+                                "page", Map.of("type", "integer", "description", "从 1 开始，默认 1"),
+                                "pageSize", Map.of("type", "integer", "description", "默认 50，上限 200")),
+                        "required", List.of()),
+                true,
+                        args -> tools.listClasses(
+                        strOr(args, "scope", "all"),
+                        strOpt(args, "stereotype"),
+                        intOr(args, "page", 1),
+                        intOr(args, "pageSize", 50))));
+
+        specs.add(tool("get_class_info",
+                "单个类的详情与归属依据：构造型、模块、出入边 top5（按权重，带来源样例）、"
+                        + "neighborConcentration（最强依赖去向分布——解释它为什么属于当前服务）。",
+                Map.of("type", "object",
+                        "properties", Map.of("fqcn", Map.of("type", "string", "description", "全限定类名")),
+                        "required", List.of("fqcn")),
+                true,
+                        args -> tools.classInfo(str(args, "fqcn"))));
+
+        specs.add(tool("find_classes",
+                "按简单名/全限定名子串搜索类（不区分大小写），返回前 20 个匹配及其所属服务。"
+                        + "不确定 fqcn 时先用这个。",
+                Map.of("type", "object",
+                        "properties", Map.of(
+                                "query", Map.of("type", "string"),
+                                "stereotype", Map.of("type", "string")),
+                        "required", List.of("query")),
+                true,
+                        args -> tools.findClasses(str(args, "query"), strOpt(args, "stereotype"))));
+
+        specs.add(tool("move_class",
+                "把一个类移到另一个服务（targetService 填服务 id；-1 = 移入共享内核）。"
+                        + "返回指标变化 delta（crossRatio/modularity 前后对比）与受影响的跨服务边，便于立即评估去留。",
+                Map.of("type", "object",
+                        "properties", Map.of(
+                                "fqcn", Map.of("type", "string"),
+                                "targetService", Map.of("type", "integer", "description", "服务 id；-1 = 共享内核")),
+                        "required", List.of("fqcn", "targetService")),
+                false,
+                        args -> tools.moveClass(str(args, "fqcn"), intOr(args, "targetService", Integer.MIN_VALUE))));
+
+        specs.add(tool("undo",
+                "撤销最近一次 move_class（栈深上限 50）。",
+                Map.of("type", "object", "properties", Map.of(), "required", List.of()),
+                false,
+                        args -> tools.undo()));
+
+        return specs.toArray(new McpServerFeatures.SyncToolSpecification[0]);
+    }
+
+    // ---------- 调用与错误包装 ----------
+
+    private interface ToolCall {
+        Object invoke(Map<String, Object> args);
+    }
+
+    private McpServerFeatures.SyncToolSpecification tool(String name, String description,
+                                                          Map<String, Object> inputSchema,
+                                                          boolean readOnly, ToolCall call) {
+        McpSchema.ToolAnnotations annotations = McpSchema.ToolAnnotations.builder()
+                .readOnlyHint(readOnly)
+                .destructiveHint(false)
+                .idempotentHint(readOnly)
+                .build();
+        McpSchema.Tool tool = McpSchema.Tool.builder(name, inputSchema)
+                .description(description)
+                .annotations(annotations)
+                .outputSchema(OUTPUT_SCHEMA)
+                .build();
+        return McpServerFeatures.SyncToolSpecification.builder()
+                .tool(tool)
+                .callHandler((exchange, request) -> invoke(call, request.arguments()))
+                .build();
+    }
+
+    private McpSchema.CallToolResult invoke(ToolCall call, Map<String, Object> args) {
+        try {
+            Object result = call.invoke(args == null ? Map.of() : args);
+            return McpSchema.CallToolResult.builder()
+                    .structuredContent(result)
+                    .addTextContent(JsonIO.mapper().writeValueAsString(result))
+                    .build();
+        } catch (M2mException e) {
+            return errorResult(e.getCode(), e.getMessage(), e.getHint());
+        } catch (JsonProcessingException e) {
+            return errorResult("E_INTERNAL", "结果序列化失败：" + e.getMessage(), null);
+        } catch (Exception e) {
+            return errorResult("E_INTERNAL", "内部错误：" + e,
+                    "详细堆栈见 server stderr 日志");
+        }
+    }
+
+    /** 工具级失败（isError）而非协议错误：对 agent 是可恢复的正常分支。 */
+    private McpSchema.CallToolResult errorResult(String code, String message, String hint) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("code", code);
+        payload.put("message", message);
+        if (hint != null) {
+            payload.put("hint", hint);
+        }
+        try {
+            return McpSchema.CallToolResult.builder()
+                    .isError(true)
+                    .structuredContent(payload)
+                    .addTextContent(JsonIO.mapper().writeValueAsString(payload))
+                    .build();
+        } catch (JsonProcessingException e) {
+            return McpSchema.CallToolResult.builder()
+                    .isError(true)
+                    .addTextContent("{\"code\":\"" + code + "\"}")
+                    .build();
+        }
+    }
+
+    // ---------- 参数装配 ----------
+
+    private static String str(Map<String, Object> args, String key) {
+        Object v = args.get(key);
+        if (v == null) {
+            throw new M2mException("E_INTERNAL", "缺少必填参数：" + key, null);
+        }
+        return String.valueOf(v);
+    }
+
+    private static String strOr(Map<String, Object> args, String key, String def) {
+        Object v = args.get(key);
+        return v == null ? def : String.valueOf(v);
+    }
+
+    private static String strOpt(Map<String, Object> args, String key) {
+        Object v = args.get(key);
+        return v == null || String.valueOf(v).isBlank() ? null : String.valueOf(v);
+    }
+
+    private static Path pathOpt(Map<String, Object> args, String key) {
+        String v = strOpt(args, key);
+        return v == null ? null : Path.of(v);
+    }
+
+    private static List<String> strList(Map<String, Object> args, String key) {
+        Object v = args.get(key);
+        if (!(v instanceof List<?> list) || list.isEmpty()) {
+            throw new M2mException("E_INTERNAL", "参数 " + key + " 须为非空字符串数组", null);
+        }
+        List<String> out = new ArrayList<>();
+        for (Object o : list) {
+            out.add(String.valueOf(o));
+        }
+        return out;
+    }
+
+    private static int intOr(Map<String, Object> args, String key, int def) {
+        Object v = args.get(key);
+        return v instanceof Number n ? n.intValue() : def;
+    }
+
+    private static long longOr(Map<String, Object> args, String key, long def) {
+        Object v = args.get(key);
+        return v instanceof Number n ? n.longValue() : def;
+    }
+
+    private static double dblOr(Map<String, Object> args, String key, double def) {
+        Object v = args.get(key);
+        return v instanceof Number n ? n.doubleValue() : def;
+    }
+
+    private static boolean boolOr(Map<String, Object> args, String key, boolean def) {
+        Object v = args.get(key);
+        return v instanceof Boolean b ? b : def;
+    }
+}

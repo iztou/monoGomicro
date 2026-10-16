@@ -51,6 +51,27 @@ java -jar monogomicro-cli/target/m2m.jar generate \
 java -jar monogomicro-web/target/monogomicro-web.jar
 ```
 
+## MCP 模式（LLM 在环）
+
+`monogomicro-mcp` 把流水线暴露为 [MCP](https://modelcontextprotocol.io) server（stdio 传输），
+Claude Desktop / 任意 MCP 客户端可对话式完成「分析 → 摘要 → 追问归属依据 → 移动类看指标变化 → 撤销」：
+
+```json
+// Claude Desktop -> Settings -> Developer -> Edit Config (claude_desktop_config.json)
+{
+  "mcpServers": {
+    "monogomicro": {
+      "command": "java",
+      "args": ["-jar", "/绝对路径/monogomicro-mcp/target/m2m-mcp.jar"]
+    }
+  }
+}
+```
+
+工具一览（9 个）：`analyze_project` / `load_workspace` / `compute_partition`（流水线）；
+`get_partition_summary` / `list_classes` / `get_class_info` / `find_classes`（观察，渐进式披露，
+单工具返回 ≤4KB）；`move_class`（返回指标 delta）/ `undo`（编辑）。设计文档见 `docs/mcp-design.md`。
+
 ## RuoYi 4.8.3 实测（285 源文件）
 
 | 阶段 | 结果 |
