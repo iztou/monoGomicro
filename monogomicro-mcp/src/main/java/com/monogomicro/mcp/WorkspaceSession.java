@@ -6,6 +6,7 @@ import com.monogomicro.codegen.MicroserviceGenerator;
 import com.monogomicro.core.M2mException;
 import com.monogomicro.core.graph.DependencyGraph;
 import com.monogomicro.core.model.AnalysisReport;
+import com.monogomicro.core.model.ClassInfo;
 import com.monogomicro.core.model.PartitionOptions;
 import com.monogomicro.core.model.PartitionResult;
 import com.monogomicro.core.parser.MavenClasspathResolver;
@@ -71,6 +72,12 @@ final class WorkspaceSession {
 
     /** analyze 会话：workspace 根默认 <projectDir>/m2m-out（与 CLI 输出约定一致）。 */
     void analyze(Path projectDir, List<String> packagePrefixes, boolean useMavenClasspath) {
+        analyze(projectDir, packagePrefixes, useMavenClasspath, null);
+    }
+
+    /** 带进度回调的 analyze（每 50 个源文件回调累计计数；回调可为 null）。 */
+    void analyze(Path projectDir, List<String> packagePrefixes, boolean useMavenClasspath,
+                 java.util.function.IntConsumer onProgress) {
         lock.writeLock().lock();
         try {
             if (!Files.isDirectory(projectDir)) {
@@ -87,6 +94,9 @@ final class WorkspaceSession {
             }
             DependencyGraph scanned;
             ProjectScanner scanner = new ProjectScanner(packagePrefixes, useMavenClasspath);
+            if (onProgress != null) {
+                scanner.setProgressListener(onProgress);
+            }
             try {
                 scanned = scanner.scan(projectDir);
             } catch (M2mException e) {
@@ -223,9 +233,7 @@ final class WorkspaceSession {
             boolean targetExists = targetService == -1
                     || partition.getCommunities().stream().anyMatch(c -> c.getId() == targetService);
             if (!targetExists) {
-                throw new M2mException("E_UNKNOWN_SERVICE",
-                        "未知服务 id：" + targetService,
-                        "服务 id 见 get_partition_summary 返回的 services[].id；-1 表示移入共享内核");
+                throw unknownService(targetService);
             }
             int from = current;
             if (from == targetService) {
@@ -263,9 +271,7 @@ final class WorkspaceSession {
             PartitionResult.Community target = partition.getCommunities().stream()
                     .filter(c -> c.getId() == serviceId).findFirst().orElse(null);
             if (target == null) {
-                throw new M2mException("E_UNKNOWN_SERVICE",
-                        "未知服务 id：" + serviceId,
-                        "服务 id 见 get_partition_summary 返回的 services[].id");
+                throw unknownService(serviceId);
             }
             if (name == null || name.isBlank()) {
                 throw new M2mException("E_BAD_PARAMS", "服务名不能为空", null);
@@ -456,8 +462,32 @@ final class WorkspaceSession {
         }
     }
 
-    static M2mException unknownClass(String fqcn) {
+    /** 带相近候选的 E_UNKNOWN_CLASS：简单名双向包含匹配（拼错常为多打/少打字符），取前 5 个。 */
+    M2mException unknownClass(String fqcn) {
+        String simple = fqcn.contains(".") ? fqcn.substring(fqcn.lastIndexOf('.') + 1) : fqcn;
+        String candidates = report == null || simple.length() < 2 ? "" : report.getClasses().stream()
+                .map(ClassInfo::getFqcn)
+                .filter(f -> {
+                    String fSimple = f.contains(".")
+                            ? f.substring(f.lastIndexOf('.') + 1) : f;
+                    return fSimple.contains(simple) || simple.contains(fSimple);
+                })
+                .limit(5)
+                .reduce((a, b) -> a + "、" + b)
+                .map(c -> "相近候选：" + c + "；")
+                .orElse("");
         return new M2mException("E_UNKNOWN_CLASS", "未知类：" + fqcn,
-                "fqcn 须为全限定名，可用 find_classes 按简单名搜索");
+                candidates + "fqcn 须为全限定名，可用 find_classes 按简单名搜索");
+    }
+
+    /** 带现有服务清单的 E_UNKNOWN_SERVICE。 */
+    M2mException unknownService(int serviceId) {
+        String services = partition == null ? "" : partition.getCommunities().stream()
+                .map(c -> c.getId() + ":" + c.getName())
+                .reduce((a, b) -> a + "、" + b)
+                .map(s -> "现有服务：" + s + "；")
+                .orElse("");
+        return new M2mException("E_UNKNOWN_SERVICE", "未知服务 id：" + serviceId,
+                services + "-1 = 共享内核；id 见 get_partition_summary");
     }
 }

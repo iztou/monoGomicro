@@ -73,8 +73,28 @@ Claude Desktop / 任意 MCP 客户端可对话式完成「分析 → 摘要 → 
 `list_classes` / `get_class_info` / `find_classes` / `get_metrics` / `get_migration_items`
 （观察，渐进式披露，单工具返回 ≤4KB）；`move_class`（返回指标 delta）/ `rename_service` /
 `undo`（编辑）。另有资源 `m2m://analysis`、`m2m://partition` 供客户端按需拉取大对象。
-错误统一结构化（`{code, message, hint}`），写路径限制在 workspace 根内。
+错误统一结构化（`{code, message, hint}`，拼错类名/服务 id 附相近候选）；写路径限制在 workspace 根内；
+`analyze_project` 支持进度通知（客户端传 `_meta.progressToken` 即每 50 个源文件收到进度）。
 设计文档见 `docs/mcp-design.md`；契约测试（真子进程 stdio JSON-RPC 全链路）随 `mvn verify` 运行。
+
+调试与体验：用官方 Inspector 图形化调用全部工具——
+
+```bash
+npx @modelcontextprotocol/inspector java -jar monogomicro-mcp/target/m2m-mcp.jar
+# 打开提示的 URL：左侧 Tools 列表逐个试；Resources 页看 m2m://analysis
+```
+
+一段真实对话（RuoYi，Claude Desktop）：
+
+> **我**：帮我看看这个单体怎么拆
+> **AI**：`load_workspace` 载入分析结果…12 个服务，模度 0.55，跨服务通信占比 19.9%，
+>         共享内核 7 个类。`get_partition_summary` 摘要如下：job-service(16) / file-service(12) / …
+> **我**：SysUserServiceImpl 为什么在 user-service？
+> **AI**：`get_class_info` → SERVICE_IMPL，25 条出边中 8 条连接 user-service 的类
+>         （`neighborConcentration`），最强依赖 SysUserMapper(weight 12) 同服务。
+> **我**：把它移到 job-service 试试
+> **AI**：`move_class` → crossRatio 0.1994 → **0.2134**，modularity 0.5476 → **0.5379**（两项均变差）。
+>         建议撤销：`undo` 已恢复，指标回落。
 
 ## RuoYi 4.8.3 实测（285 源文件）
 

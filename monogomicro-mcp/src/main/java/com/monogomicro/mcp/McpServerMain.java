@@ -70,11 +70,12 @@ public final class McpServerMain {
                                         "description", "可选：analysis.json 落盘路径")),
                         "required", List.of("projectDir", "packagePrefixes")),
                 false,
-                        args -> tools.analyzeProject(
+                        (exchange, progressToken, args) -> tools.analyzeProject(
                         Path.of(str(args, "projectDir")),
                         strList(args, "packagePrefixes"),
                         boolOr(args, "useMavenClasspath", true),
-                        pathOpt(args, "persistAnalysisPath"))));
+                        pathOpt(args, "persistAnalysisPath"),
+                        progressSink(exchange, progressToken))));
 
         specs.add(tool("load_workspace",
                 "从已有 analysis.json（可选 partition.json）载入会话；不带分区时自动计算一版纯静态分区。"
@@ -88,7 +89,7 @@ public final class McpServerMain {
                                         "description", "可选：单体项目根，generate 阶段需要")),
                         "required", List.of("analysisPath")),
                 false,
-                        args -> tools.loadWorkspace(
+                        (exchange, progressToken, args) -> tools.loadWorkspace(
                         Path.of(str(args, "analysisPath")),
                         pathOpt(args, "partitionPath"),
                         pathOpt(args, "projectDir"))));
@@ -104,7 +105,7 @@ public final class McpServerMain {
                                 "seed", Map.of("type", "integer", "description", "随机种子，默认 42")),
                         "required", List.of()),
                 false,
-                        args -> tools.computePartition(
+                        (exchange, progressToken, args) -> tools.computePartition(
                         dblOr(args, "alpha", 0.5),
                         dblOr(args, "beta", 0.5),
                         intOr(args, "minSize", 5),
@@ -116,7 +117,7 @@ public final class McpServerMain {
                         + "共享内核大小。每轮对话的锚点，先看这个再看细节。",
                 Map.of("type", "object", "properties", Map.of(), "required", List.of()),
                 true,
-                        args -> tools.partitionSummary()));
+                        (exchange, progressToken, args) -> tools.partitionSummary()));
 
         specs.add(tool("list_classes",
                 "分页列出类清单。scope 取值：all / kernel / service:<id>（id 见 get_partition_summary）；"
@@ -129,7 +130,7 @@ public final class McpServerMain {
                                 "pageSize", Map.of("type", "integer", "description", "默认 50，上限 200")),
                         "required", List.of()),
                 true,
-                        args -> tools.listClasses(
+                        (exchange, progressToken, args) -> tools.listClasses(
                         strOr(args, "scope", "all"),
                         strOpt(args, "stereotype"),
                         intOr(args, "page", 1),
@@ -142,7 +143,7 @@ public final class McpServerMain {
                         "properties", Map.of("fqcn", Map.of("type", "string", "description", "全限定类名")),
                         "required", List.of("fqcn")),
                 true,
-                        args -> tools.classInfo(str(args, "fqcn"))));
+                        (exchange, progressToken, args) -> tools.classInfo(str(args, "fqcn"))));
 
         specs.add(tool("find_classes",
                 "按简单名/全限定名子串搜索类（不区分大小写），返回前 20 个匹配及其所属服务。"
@@ -153,7 +154,7 @@ public final class McpServerMain {
                                 "stereotype", Map.of("type", "string")),
                         "required", List.of("query")),
                 true,
-                        args -> tools.findClasses(str(args, "query"), strOpt(args, "stereotype"))));
+                        (exchange, progressToken, args) -> tools.findClasses(str(args, "query"), strOpt(args, "stereotype"))));
 
         specs.add(tool("move_class",
                 "把一个类移到另一个服务（targetService 填服务 id；-1 = 移入共享内核）。"
@@ -164,13 +165,13 @@ public final class McpServerMain {
                                 "targetService", Map.of("type", "integer", "description", "服务 id；-1 = 共享内核")),
                         "required", List.of("fqcn", "targetService")),
                 false,
-                        args -> tools.moveClass(str(args, "fqcn"), reqInt(args, "targetService"))));
+                        (exchange, progressToken, args) -> tools.moveClass(str(args, "fqcn"), reqInt(args, "targetService"))));
 
         specs.add(tool("undo",
                 "撤销最近一次 move_class / rename_service（栈深上限 50）。",
                 Map.of("type", "object", "properties", Map.of(), "required", List.of()),
                 false,
-                        args -> tools.undo()));
+                        (exchange, progressToken, args) -> tools.undo()));
 
         specs.add(tool("ingest_trace",
                 "导入 monogomicro-agent 产出的运行时轨迹并解析为业务用例；"
@@ -180,7 +181,7 @@ public final class McpServerMain {
                                 "description", "agent 轨迹文件路径（-javaagent out 参数指定的 trace.log）")),
                         "required", List.of("tracePath")),
                 false,
-                        args -> tools.ingestTrace(pathOpt(args, "tracePath"))));
+                        (exchange, progressToken, args) -> tools.ingestTrace(pathOpt(args, "tracePath"))));
 
         specs.add(tool("rename_service",
                 "给服务起语义名（影响展示与 generate 的 svc-<tag> 目录名）。看类列表后命名是推荐工作流。",
@@ -190,7 +191,7 @@ public final class McpServerMain {
                                 "name", Map.of("type", "string", "description", "如 user-service / order-service")),
                         "required", List.of("serviceId", "name")),
                 false,
-                        args -> tools.renameService(reqInt(args, "serviceId"), str(args, "name"))));
+                        (exchange, progressToken, args) -> tools.renameService(reqInt(args, "serviceId"), str(args, "name"))));
 
         specs.add(tool("generate_services",
                 "按当前分区生成微服务工程。默认 dryRun=true 只返回统计与迁移项不落盘；"
@@ -206,7 +207,7 @@ public final class McpServerMain {
                                 "overwrite", Map.of("type", "boolean", "description", "默认 false")),
                         "required", List.of()),
                 false,
-                        args -> tools.generateServices(
+                        (exchange, progressToken, args) -> tools.generateServices(
                                 pathOpt(args, "projectDir"),
                                 pathOpt(args, "outDir"),
                                 boolOr(args, "dryRun", true),
@@ -218,20 +219,20 @@ public final class McpServerMain {
                         "properties", Map.of("path", Map.of("type", "string")),
                         "required", List.of()),
                 false,
-                        args -> tools.savePartition(pathOpt(args, "path"))));
+                        (exchange, progressToken, args) -> tools.savePartition(pathOpt(args, "path"))));
 
         specs.add(tool("get_metrics",
                 "指标细档：实时 crossRatio/modularity + 每服务规模与跨服务通信量（crossOut/crossIn）"
                         + "+ compute_partition 时的 alpha/beta/用例跨度（标注不实时）。",
                 Map.of("type", "object", "properties", Map.of(), "required", List.of()),
                 true,
-                        args -> tools.metrics()));
+                        (exchange, progressToken, args) -> tools.metrics()));
 
         specs.add(tool("get_migration_items",
                 "最近一次 generate 的人工迁移清单（事务/反射等无法自动改写项）。分区被编辑后缓存失效，需重新 generate。",
                 Map.of("type", "object", "properties", Map.of(), "required", List.of()),
                 true,
-                        args -> tools.migrationItems()));
+                        (exchange, progressToken, args) -> tools.migrationItems()));
 
         return specs.toArray(new McpServerFeatures.SyncToolSpecification[0]);
     }
@@ -277,8 +278,20 @@ public final class McpServerMain {
 
     // ---------- 调用与错误包装 ----------
 
+    /** exchange 供进度通知，progressToken 为客户端在 _meta 里提供的令牌（可 null = 不通知）。 */
     private interface ToolCall {
-        Object invoke(Map<String, Object> args);
+        Object invoke(io.modelcontextprotocol.server.McpSyncServerExchange exchange,
+                      Object progressToken, Map<String, Object> args);
+    }
+
+    /** progressToken → IntConsumer 桥：token 为 null（客户端未订阅进度）时返回 null，零开销。 */
+    private static java.util.function.IntConsumer progressSink(
+            io.modelcontextprotocol.server.McpSyncServerExchange exchange, Object progressToken) {
+        if (exchange == null || progressToken == null) {
+            return null;
+        }
+        return files -> exchange.progressNotification(new McpSchema.ProgressNotification(
+                progressToken, (double) files, null, "已解析 " + files + " 个源文件", null));
     }
 
     private McpServerFeatures.SyncToolSpecification tool(String name, String description,
@@ -296,13 +309,16 @@ public final class McpServerMain {
                 .build();
         return McpServerFeatures.SyncToolSpecification.builder()
                 .tool(tool)
-                .callHandler((exchange, request) -> invoke(call, request.arguments()))
+                .callHandler((exchange, request) -> invoke(
+                        call, exchange, request.progressToken(), request.arguments()))
                 .build();
     }
 
-    private McpSchema.CallToolResult invoke(ToolCall call, Map<String, Object> args) {
+    private McpSchema.CallToolResult invoke(ToolCall call,
+                                            io.modelcontextprotocol.server.McpSyncServerExchange exchange,
+                                            Object progressToken, Map<String, Object> args) {
         try {
-            Object result = call.invoke(args == null ? Map.of() : args);
+            Object result = call.invoke(exchange, progressToken, args == null ? Map.of() : args);
             return McpSchema.CallToolResult.builder()
                     .structuredContent(result)
                     .addTextContent(JsonIO.mapper().writeValueAsString(result))

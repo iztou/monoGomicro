@@ -200,18 +200,48 @@ class McpToolsTest {
 
         WorkspaceSession fresh = new WorkspaceSession();
         McpTools freshTools = new McpTools(fresh);
-        Map<String, Object> r = freshTools.analyzeProject(project, List.of("com.example"), false, null);
+        Map<String, Object> r = freshTools.analyzeProject(project, List.of("com.example"), false, null, null);
         assertEquals(true, r.containsKey("jarsResolved"));
         assertEquals(false, r.get("classpathDegraded")); // 未启用 maven classpath，不算降级
 
         // workspace 根 = <project>/m2m-out；落到其外必须拒绝
         M2mException e = assertThrows(M2mException.class, () -> freshTools.analyzeProject(
-                project, List.of("com.example"), false, temp.resolve("escape.json")));
+                project, List.of("com.example"), false, temp.resolve("escape.json"), null));
         assertEquals("E_OUT_OF_WORKSPACE", e.getCode());
 
         // 根内落盘放行
         Map<String, Object> ok = freshTools.analyzeProject(project, List.of("com.example"), false,
-                project.resolve("m2m-out/analysis.json"));
+                project.resolve("m2m-out/analysis.json"), null);
         assertTrue(String.valueOf(ok.get("analysisPersisted")).endsWith("m2m-out/analysis.json"));
+    }
+
+    @Test
+    void analyzeReportsProgressEvery50Files() throws Exception {
+        Path project = temp.resolve("bulk");
+        Path pkg = project.resolve("src/main/java/com/example");
+        java.nio.file.Files.createDirectories(pkg);
+        for (int i = 1; i <= 120; i++) {
+            java.nio.file.Files.writeString(pkg.resolve("C" + i + ".java"),
+                    "package com.example;\nclass C" + i + " {}");
+        }
+        List<Integer> ticks = new java.util.ArrayList<>();
+        new McpTools(new WorkspaceSession()).analyzeProject(
+                project, List.of("com.example"), false, null, ticks::add);
+        // 节流：每 50 个文件一次，120 个文件应收到 50 与 100（150 未达到）
+        assertEquals(List.of(50, 100), ticks);
+    }
+
+    @Test
+    void unknownClassHintCarriesCandidates() {
+        // 设计 §9 承诺：E_UNKNOWN_CLASS 附相近候选（简单名/末段匹配前 5 个）
+        M2mException exact = assertThrows(M2mException.class,
+                () -> tools.classInfo("a.Aa"));
+        assertTrue(exact.getHint().contains("相近候选"), "应带候选：" + exact.getHint());
+        assertTrue(exact.getHint().contains("a.A"));
+
+        M2mException svc = assertThrows(M2mException.class,
+                () -> tools.moveClass("a.A", 99));
+        assertTrue(svc.getHint().contains("0:alpha"), "服务清单应入 hint：" + svc.getHint());
+        assertTrue(svc.getHint().contains("1:beta"));
     }
 }

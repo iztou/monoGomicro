@@ -44,9 +44,10 @@ final class McpTools {
     // ---------- 流水线层 ----------
 
     Map<String, Object> analyzeProject(Path projectDir, List<String> packagePrefixes,
-                                       boolean useMavenClasspath, Path persistAnalysisPath) {
+                                       boolean useMavenClasspath, Path persistAnalysisPath,
+                                       java.util.function.IntConsumer onProgress) {
         long start = System.currentTimeMillis();
-        session.analyze(projectDir, packagePrefixes, useMavenClasspath);
+        session.analyze(projectDir, packagePrefixes, useMavenClasspath, onProgress);
         AnalysisReport report = session.read(session::report);
         if (persistAnalysisPath != null) {
             // 写路径白名单（设计 §12）：落盘必须在 workspace 根内，拒绝逃逸
@@ -178,7 +179,7 @@ final class McpTools {
             ClassInfo info = session.report().getClasses().stream()
                     .filter(c -> c.getFqcn().equals(fqcn)).findFirst().orElse(null);
             if (info == null) {
-                throw WorkspaceSession.unknownClass(fqcn);
+                throw session.unknownClass(fqcn);
             }
             Integer service = session.serviceOf().get(fqcn);
             DependencyGraph graph = session.graph();
@@ -243,6 +244,11 @@ final class McpTools {
     // ---------- 编辑层 ----------
 
     Map<String, Object> moveClass(String fqcn, int targetService) {
+        // 先查状态：指标计算访问 partition，ANALYZED 状态下为 null（曾因此 NPE 落成 E_INTERNAL）
+        session.read(() -> {
+            requirePartitionedView();
+            return null;
+        });
         PartitionMetrics.Snapshot before = session.read(() ->
                 PartitionMetrics.of(session.graph(), session.partition()));
         WorkspaceSession.MoveOutcome outcome = session.moveClass(fqcn, targetService);

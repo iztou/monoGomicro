@@ -57,6 +57,8 @@ public class ProjectScanner {
     private final boolean useMavenClasspath;
     private final int maxSourceFiles;
     private final int maxEdges;
+    /** 可选进度监听：每解析 {@link #PROGRESS_EVERY} 个文件回调一次累计计数（MCP progress 通知用）。 */
+    private java.util.function.IntConsumer progressListener;
 
     private final Map<String, String> simpleNameToFqcn = new HashMap<>();
     private final Set<String> ambiguousSimpleNames = new HashSet<>();
@@ -76,6 +78,19 @@ public class ProjectScanner {
         this.useMavenClasspath = useMavenClasspath;
         this.maxSourceFiles = maxSourceFiles;
         this.maxEdges = maxEdges;
+    }
+
+    /** 进度回调节流间隔（文件数）。 */
+    private static final int PROGRESS_EVERY = 50;
+
+    public void setProgressListener(java.util.function.IntConsumer progressListener) {
+        this.progressListener = progressListener;
+    }
+
+    private void reportProgress(int files) {
+        if (progressListener != null && files % PROGRESS_EVERY == 0) {
+            progressListener.accept(files);
+        }
     }
 
     /** 最近一次 scan 的 classpath 解析结果；useMavenClasspath=false 或尚未 scan 时为 null。 */
@@ -117,6 +132,7 @@ public class ProjectScanner {
         Map<String, ParsedUnit> units = new HashMap<>();
         DependencyGraph graph = new DependencyGraph();
         int scannedFiles = 0;
+        int parsedFiles = 0;
         for (Path root : sourceRoots) {
             String moduleName = moduleNameOf(projectDir, root);
             try (Stream<Path> files = Files.walk(root)) {
@@ -131,6 +147,7 @@ public class ProjectScanner {
                             "确认 projectDir 指向的是目标单体而非过大的目录；确属超大项目可用构造参数调大上限");
                 }
                 for (Path file : javaFiles) {
+                    reportProgress(++parsedFiles);
                     ParseResult<CompilationUnit> result = parser.parse(file);
                     CompilationUnit cu = result.getResult().orElse(null);
                     if (cu == null) {
