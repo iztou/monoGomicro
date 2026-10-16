@@ -166,8 +166,12 @@ final class WorkspaceSession {
         lock.writeLock().lock();
         try {
             requireAnalyzed();
+            if (tracePath == null) {
+                throw new M2mException("E_BAD_PARAMS", "缺少必填参数：tracePath",
+                        "传入 agent 产出的 trace.log 路径");
+            }
             if (!Files.isRegularFile(tracePath)) {
-                throw new M2mException("E_PROJECT_NOT_FOUND",
+                throw new M2mException("E_TRACE_NOT_FOUND",
                         "轨迹文件不存在：" + tracePath,
                         "路径应为 agent 产出的 trace.log（-javaagent out 参数指定）");
             }

@@ -125,8 +125,10 @@ class WorkspaceSessionTest {
         // E 开用例不压栈，第一个 N 的 caller 为 null——classes 收集的是被调方
         assertTrue(useCases.get(0).getClasses().contains("a.B"));
 
-        assertEquals("E_PROJECT_NOT_FOUND",
+        assertEquals("E_TRACE_NOT_FOUND",
                 assertThrows(M2mException.class, () -> session.ingestTrace(temp.resolve("nope.log"))).getCode());
+        assertEquals("E_BAD_PARAMS",
+                assertThrows(M2mException.class, () -> session.ingestTrace(null)).getCode());
     }
 
     @Test

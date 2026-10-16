@@ -317,8 +317,8 @@ EMPTY ──analyze_project──▶ ANALYZED ──compute_partition──▶ P
 |---|---|---|
 | M0 | core 增量：PartitionMetrics 下沉、formatVersion、mavenModules、扫描上限；codegen 增量：GenerateOptions（dryRun/overwrite） | 1 天 |
 | M1（MVP） | mcp 模块骨架 + stdio + 8 工具：analyze_project / load_workspace / compute_partition / get_partition_summary / list_classes / get_class_info / find_classes / move_class（含 undo） | 2~3 天 |
-| M2 | generate_services（dry-run/overwrite/路径校验）、save_partition、rename_service、get_metrics、get_migration_items、ingest_trace、resources、进度通知 | 1~2 天 |
-| M3 | 打磨：README（含 Claude Desktop `claude_desktop_config.json` 配置片段示例）+ Inspector 截图、错误 hint 完善、（可选）HTTP 传输 | 1 天 |
+| M2 | generate_services（dry-run/overwrite/路径校验）、save_partition、rename_service、get_metrics、get_migration_items、ingest_trace、resources、契约测试 | 1~2 天 |
+| M3 | 打磨：README（含 Claude Desktop `claude_desktop_config.json` 配置片段示例）+ Inspector 截图、错误 hint 完善、进度通知（progressToken）、（可选）HTTP 传输 | 1 天 |
 
 MVP 验收标准：在 Claude Desktop 里对一个真实单体完成「分析 → 摘要 → 追问某类归属依据 →
 移动它并看到指标变化 → undo」全对话闭环。
