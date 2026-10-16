@@ -181,8 +181,9 @@ public class RpcBridgeGenerator {
         sb.append("    @Override\n    public ").append(m.returnType()).append(" ").append(m.name())
                 .append("(").append(paramsDecl(m)).append(") {\n");
         if (m.paramTypes().isEmpty()) {
+            // 发空 Map 而非 null body：桥端 @RequestBody 空 body 会 400（required 语义）
             sb.append("        Object result = restTemplate.postForObject(").append(url)
-                    .append(", null, Object.class);\n");
+                    .append(", java.util.Map.of(), Object.class);\n");
         } else if (m.paramTypes().size() == 1) {
             // 与桥端 @RequestBody Map 契约对齐：参数包装成 {"p0": value}，
             // 裸值会被 RestTemplate 以 text/plain 发出，桥端 415
@@ -239,8 +240,10 @@ public class RpcBridgeGenerator {
             // 以非 JSON 形态输出，客户端 Jackson 反序列化必炸
             sb.append("    @PostMapping(value = \"/").append(m.name())
                     .append("\", produces = \"application/json\")\n");
+            // required=false + 空 body 归一：容忍不发 body 的客户端（无参方法的合理调用形态）
             sb.append("    public String ").append(m.name())
-                    .append("(@RequestBody java.util.Map<String, Object> body) throws Exception {\n");
+                    .append("(@RequestBody(required = false) java.util.Map<String, Object> body) throws Exception {\n");
+            sb.append("        if (body == null) body = java.util.Map.of();\n");
             sb.append(isVoid ? "        service." : "        return MAPPER.writeValueAsString(service.")
                     .append(m.name()).append("(");
             for (int i = 0; i < m.paramTypes().size(); i++) {

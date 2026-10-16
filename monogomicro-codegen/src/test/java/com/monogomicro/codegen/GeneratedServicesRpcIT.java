@@ -92,6 +92,8 @@ class GeneratedServicesRpcIT {
         awaitHealthy(consumerPort, "/api/greet?name=it", 90);
         assertEquals("hello it", httpGet(consumerPort, "/api/greet?name=it"));
         assertEquals("hello monoGomicro", httpGet(consumerPort, "/api/greet?name=monoGomicro"));
+        // 无参方法穿透 RPC 桥（空 body 契约：曾 400）
+        assertEquals("v1", httpGet(consumerPort, "/api/version"));
     }
 
     // ---------- fixture ----------
@@ -129,6 +131,8 @@ class GeneratedServicesRpcIT {
 
                 public interface IProviderService {
                     String greet(String name);
+
+                    String version(); // 无参方法：锁住 RPC 桥的空 body 契约（空 body 曾 400）
                 }
                 """);
         Files.writeString(src.resolve("ProviderServiceImpl.java"), """
@@ -141,6 +145,11 @@ class GeneratedServicesRpcIT {
                     @Override
                     public String greet(String name) {
                         return "hello " + name;
+                    }
+
+                    @Override
+                    public String version() {
+                        return "v1";
                     }
                 }
                 """);
@@ -165,6 +174,11 @@ class GeneratedServicesRpcIT {
                     @GetMapping("/greet")
                     public String greet(@RequestParam String name) {
                         return providerService.greet(name);
+                    }
+
+                    @GetMapping("/version")
+                    public String version() {
+                        return providerService.version();
                     }
                 }
                 """);
