@@ -32,12 +32,7 @@ public final class McpServerMain {
     private final McpTools tools = new McpTools(session);
 
     public static void main(String[] args) throws InterruptedException {
-        McpServerMain mcp = new McpServerMain();
-        McpSyncServer server = McpServer
-                .sync(new StdioServerTransportProvider(McpJsonDefaults.getMapper()))
-                .serverInfo("monogomicro", "1.0.0")
-                .tools(mcp.toolSpecs())
-                .build();
+        McpSyncServer server = build(new StdioServerTransportProvider(McpJsonDefaults.getMapper()));
         CountDownLatch stop = new CountDownLatch(1);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             server.closeGracefully();
@@ -45,6 +40,16 @@ public final class McpServerMain {
         }));
         // stdio 会话由 transport 线程驱动；主线程挂起等待进程退出（客户端关闭 stdin / 杀进程）
         stop.await();
+    }
+
+    /** 组装 server（工具 + 资源）；transport 注入，契约测试可用管道流驱动同一条链路。 */
+    static McpSyncServer build(StdioServerTransportProvider transport) {
+        McpServerMain mcp = new McpServerMain();
+        return McpServer.sync(transport)
+                .serverInfo("monogomicro", "1.0.0")
+                .tools(mcp.toolSpecs())
+                .resources(mcp.resourceSpecs())
+                .build();
     }
 
     // ---------- 工具注册 ----------
@@ -162,12 +167,112 @@ public final class McpServerMain {
                         args -> tools.moveClass(str(args, "fqcn"), reqInt(args, "targetService"))));
 
         specs.add(tool("undo",
-                "撤销最近一次 move_class（栈深上限 50）。",
+                "撤销最近一次 move_class / rename_service（栈深上限 50）。",
                 Map.of("type", "object", "properties", Map.of(), "required", List.of()),
                 false,
                         args -> tools.undo()));
 
+        specs.add(tool("ingest_trace",
+                "导入 monogomicro-agent 产出的运行时轨迹并解析为业务用例；"
+                        + "下一次 compute_partition 将融合动态行为（双图权重）。前置：analyze_project 或 load_workspace。",
+                Map.of("type", "object",
+                        "properties", Map.of("tracePath", Map.of("type", "string",
+                                "description", "agent 轨迹文件路径（-javaagent out 参数指定的 trace.log）")),
+                        "required", List.of("tracePath")),
+                false,
+                        args -> tools.ingestTrace(pathOpt(args, "tracePath"))));
+
+        specs.add(tool("rename_service",
+                "给服务起语义名（影响展示与 generate 的 svc-<tag> 目录名）。看类列表后命名是推荐工作流。",
+                Map.of("type", "object",
+                        "properties", Map.of(
+                                "serviceId", Map.of("type", "integer"),
+                                "name", Map.of("type", "string", "description", "如 user-service / order-service")),
+                        "required", List.of("serviceId", "name")),
+                false,
+                        args -> tools.renameService(reqInt(args, "serviceId"), str(args, "name"))));
+
+        specs.add(tool("generate_services",
+                "按当前分区生成微服务工程。默认 dryRun=true 只返回统计与迁移项不落盘；"
+                        + "确认后 dryRun=false 正式生成（目标目录非空需 overwrite=true，将清空重建）。"
+                        + "前置：PARTITIONED；load_workspace 会话需显式 projectDir。",
+                Map.of("type", "object",
+                        "properties", Map.of(
+                                "projectDir", Map.of("type", "string",
+                                        "description", "单体项目根；analyze 会话可省略自动继承"),
+                                "outDir", Map.of("type", "string",
+                                        "description", "输出目录，默认 <workspace>/services"),
+                                "dryRun", Map.of("type", "boolean", "description", "默认 true"),
+                                "overwrite", Map.of("type", "boolean", "description", "默认 false")),
+                        "required", List.of()),
+                false,
+                        args -> tools.generateServices(
+                                pathOpt(args, "projectDir"),
+                                pathOpt(args, "outDir"),
+                                boolOr(args, "dryRun", true),
+                                boolOr(args, "overwrite", false))));
+
+        specs.add(tool("save_partition",
+                "把当前分区（含编辑）保存为 partition.json（workspace 根内），供 CLI / web 复用。默认 <workspace>/partition.json。",
+                Map.of("type", "object",
+                        "properties", Map.of("path", Map.of("type", "string")),
+                        "required", List.of()),
+                false,
+                        args -> tools.savePartition(pathOpt(args, "path"))));
+
+        specs.add(tool("get_metrics",
+                "指标细档：实时 crossRatio/modularity + 每服务规模与跨服务通信量（crossOut/crossIn）"
+                        + "+ compute_partition 时的 alpha/beta/用例跨度（标注不实时）。",
+                Map.of("type", "object", "properties", Map.of(), "required", List.of()),
+                true,
+                        args -> tools.metrics()));
+
+        specs.add(tool("get_migration_items",
+                "最近一次 generate 的人工迁移清单（事务/反射等无法自动改写项）。分区被编辑后缓存失效，需重新 generate。",
+                Map.of("type", "object", "properties", Map.of(), "required", List.of()),
+                true,
+                        args -> tools.migrationItems()));
+
         return specs.toArray(new McpServerFeatures.SyncToolSpecification[0]);
+    }
+
+    // ---------- 资源注册（客户端按需拉取大对象，不占对话上下文） ----------
+
+    private McpServerFeatures.SyncResourceSpecification[] resourceSpecs() {
+        List<McpServerFeatures.SyncResourceSpecification> specs = new ArrayList<>();
+
+        specs.add(new McpServerFeatures.SyncResourceSpecification(
+                McpSchema.Resource.builder("m2m://analysis", "analysis")
+                        .description("原始分析结果（analysis.json 等价物：类清单 + 加权依赖边）")
+                        .mimeType("application/json").build(),
+                (exchange, request) -> readResource("m2m://analysis",
+                        () -> session.read(session::report))));
+
+        specs.add(new McpServerFeatures.SyncResourceSpecification(
+                McpSchema.Resource.builder("m2m://partition", "partition")
+                        .description("当前分区（含未保存编辑，与 save_partition 落盘内容一致）")
+                        .mimeType("application/json").build(),
+                (exchange, request) -> readResource("m2m://partition",
+                        () -> session.read(session::partition))));
+
+        return specs.toArray(new McpServerFeatures.SyncResourceSpecification[0]);
+    }
+
+    private McpSchema.ReadResourceResult readResource(String uri,
+                                                      java.util.function.Supplier<Object> supplier) {
+        Object payload = supplier.get();
+        String text;
+        if (payload == null) {
+            text = "{\"note\": \"会话尚未载入数据，先 analyze_project 或 load_workspace\"}";
+        } else {
+            try {
+                text = JsonIO.mapper().writeValueAsString(payload);
+            } catch (JsonProcessingException e) {
+                text = "{\"error\": \"序列化失败: " + e.getMessage() + "\"}";
+            }
+        }
+        return new McpSchema.ReadResourceResult(List.of(
+                new McpSchema.TextResourceContents(uri, "application/json", text)));
     }
 
     // ---------- 调用与错误包装 ----------

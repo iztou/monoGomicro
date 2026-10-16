@@ -1,5 +1,6 @@
 package com.monogomicro.mcp;
 
+import com.monogomicro.codegen.GenerationResult;
 import com.monogomicro.core.M2mException;
 import com.monogomicro.core.graph.DependencyGraph;
 import com.monogomicro.core.model.AnalysisReport;
@@ -9,6 +10,7 @@ import com.monogomicro.core.model.PartitionResult;
 import com.monogomicro.core.parser.MavenClasspathResolver;
 import com.monogomicro.core.partition.PartitionMetrics;
 import com.monogomicro.core.report.JsonIO;
+import com.monogomicro.core.trace.UseCase;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -271,9 +273,131 @@ final class McpTools {
 
     Map<String, Object> undo() {
         WorkspaceSession.Edit edit = session.undo();
-        return orderedMap("restored", orderedMap(
-                "fqcn", edit.fqcn(),
-                "service", serviceView(edit.fromService())));
+        Map<String, Object> restored = new LinkedHashMap<>();
+        if (edit instanceof WorkspaceSession.MoveEdit m) {
+            restored.put("fqcn", m.fqcn());
+            restored.put("service", serviceView(m.fromService()));
+        } else if (edit instanceof WorkspaceSession.RenameEdit r) {
+            restored.put("serviceId", r.serviceId());
+            restored.put("name", r.oldName());
+        }
+        return orderedMap("restored", restored);
+    }
+
+    // ---------- M2：轨迹 / 重命名 / 生成 / 落盘 / 指标 / 迁移清单 ----------
+
+    Map<String, Object> ingestTrace(Path tracePath) {
+        List<UseCase> useCases = session.ingestTrace(tracePath);
+        List<Map<String, Object>> top = new ArrayList<>();
+        useCases.stream().limit(5).forEach(uc -> top.add(orderedMap(
+                "name", uc.getName(),
+                "classes", uc.getClasses().size(),
+                "edges", uc.getEdgeWeights().size())));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("useCases", useCases.size());
+        out.put("topUseCases", top);
+        out.put("next", "compute_partition 将融合动态轨迹（双图权重 α/β）");
+        return out;
+    }
+
+    Map<String, Object> renameService(int serviceId, String name) {
+        session.renameService(serviceId, name);
+        return session.read(() -> orderedMap(
+                "serviceId", serviceId,
+                "name", name.trim(),
+                "note", "影响 get_partition_summary 展示与 generate 的 svc-<tag> 目录名",
+                "undoDepth", session.undoDepth()));
+    }
+
+    Map<String, Object> generateServices(Path projectDir, Path outDir, boolean dryRun, boolean overwrite) {
+        long start = System.currentTimeMillis();
+        WorkspaceSession.GenerateOutcome outcome =
+                session.generateServices(projectDir, outDir, dryRun, overwrite);
+        GenerationResult r = outcome.result();
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("dryRun", outcome.dryRun());
+        out.put("services", r.getClassesPerService().size());
+        out.put("classesTotal", r.getClassesPerService().values().stream().mapToInt(Integer::intValue).sum());
+        out.put("rpcBridges", r.getGeneratedBridges().size());
+        out.put("injectionsRewritten", r.getRewrittenInjections().size());
+        out.put("resourcesMigrated", r.getCopiedResources());
+        out.put("manualItemsTotal", r.getManualItems().size());
+        out.put("manualItems", r.getManualItems().stream().limit(10).toList());
+        out.put("outDir", outcome.outDir().toString());
+        out.put("durationMs", System.currentTimeMillis() - start);
+        if (outcome.dryRun()) {
+            out.put("note", "dry-run：目标目录未被写入；确认后以 dryRun=false 正式生成");
+        } else {
+            out.put("next", "get_migration_items 查看需人工处理的项；工程可 mvn compile 验证");
+        }
+        return out;
+    }
+
+    Map<String, Object> savePartition(Path path) {
+        Path saved = session.savePartition(path);
+        return orderedMap("saved", saved.toString(),
+                "note", "当前分区（含未 undo 的编辑）已落盘，可被 CLI / web 复用");
+    }
+
+    /** 比摘要更细的数值视图：实时全局指标 + 每服务规模/跨服务通信量 + 计算期指标（标注可能过期）。 */
+    Map<String, Object> metrics() {
+        return session.read(() -> {
+            requirePartitionedView();
+            PartitionMetrics.Snapshot snapshot =
+                    PartitionMetrics.of(session.graph(), session.partition());
+
+            // 实时每服务跨服务通信量（出向/入向权重）
+            Map<Integer, long[]> cross = new LinkedHashMap<>();
+            session.graph().edges().forEach(e -> {
+                Integer ca = session.serviceOf().get(e.getFrom());
+                Integer cb = session.serviceOf().get(e.getTo());
+                if (ca != null && cb != null && ca >= 0 && cb >= 0 && !ca.equals(cb)) {
+                    cross.computeIfAbsent(ca, k -> new long[2])[0] += e.getWeight();
+                    cross.computeIfAbsent(cb, k -> new long[2])[1] += e.getWeight();
+                }
+            });
+            List<Map<String, Object>> perService = new ArrayList<>();
+            snapshot.communities().forEach(c -> {
+                long[] crossWeight = cross.getOrDefault(c.id(), new long[2]);
+                perService.add(orderedMap(
+                        "id", c.id(), "name", c.name(), "size", c.size(),
+                        "crossOut", crossWeight[0], "crossIn", crossWeight[1]));
+            });
+
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("crossRatio", round4(snapshot.crossRatio()));
+            out.put("modularity", round4(snapshot.modularity()));
+            out.put("kernelSize", snapshot.kernelSize());
+            out.put("perService", perService);
+            out.put("undoDepth", session.undoDepth());
+            // 计算期指标（alpha/beta/用例跨度）在分区编辑后不实时重算，标注来源
+            var m = session.partition().getMetrics();
+            Map<String, Object> computeTime = new LinkedHashMap<>();
+            computeTime.put("alpha", session.partition().getAlpha());
+            computeTime.put("beta", session.partition().getBeta());
+            computeTime.put("avgUseCaseSpan", m.getAvgUseCaseSpan());
+            computeTime.put("imbalance", m.getImbalance());
+            computeTime.put("note", "compute_partition 时的值；分区编辑后仅 crossRatio/modularity 实时");
+            out.put("computeTime", computeTime);
+            return out;
+        });
+    }
+
+    Map<String, Object> migrationItems() {
+        return session.read(() -> {
+            GenerationResult r = session.generationResult();
+            if (r == null) {
+                throw new M2mException("E_NO_GENERATION",
+                        "会话中没有有效的生成结果（尚未生成，或分区在生成后被编辑）",
+                        "先（重新）调用 generate_services，再查看迁移清单");
+            }
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("total", r.getManualItems().size());
+            out.put("items", r.getManualItems().stream().limit(50).toList());
+            out.put("truncated", r.getManualItems().size() > 50);
+            out.put("doc", "generate 落盘时同步写入输出目录的 MIGRATION.md");
+            return out;
+        });
     }
 
     // ---------- 内部 ----------

@@ -15,7 +15,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WorkspaceSessionTest {
 
@@ -77,11 +79,80 @@ class WorkspaceSessionTest {
         assertEquals(1, session.serviceOf().get("a.A"));
         assertEquals(1, session.undoDepth());
 
-        WorkspaceSession.Edit restored = session.undo();
+        WorkspaceSession.Edit edit = session.undo();
+        assertInstanceOf(WorkspaceSession.MoveEdit.class, edit);
+        WorkspaceSession.MoveEdit restored = (WorkspaceSession.MoveEdit) edit;
         assertEquals("a.A", restored.fqcn());
         assertEquals(0, restored.fromService());
         assertEquals(0, session.serviceOf().get("a.A"));
         assertEquals(0, session.undoDepth());
+    }
+
+    @Test
+    void renameThenUndoRoundtrip() {
+        String oldName = session.renameService(0, "user-core");
+        assertEquals("alpha", oldName);
+        assertEquals("user-core", session.partition().getCommunities().get(0).getName());
+        assertEquals(1, session.undoDepth());
+
+        WorkspaceSession.Edit edit = session.undo();
+        assertInstanceOf(WorkspaceSession.RenameEdit.class, edit);
+        assertEquals("alpha", session.partition().getCommunities().get(0).getName());
+        assertEquals(0, session.undoDepth());
+    }
+
+    @Test
+    void renameUnknownServiceIsStructuredError() {
+        assertEquals("E_UNKNOWN_SERVICE",
+                assertThrows(M2mException.class, () -> session.renameService(99, "x")).getCode());
+        assertEquals("E_BAD_PARAMS",
+                assertThrows(M2mException.class, () -> session.renameService(0, " ")).getCode());
+    }
+
+    @Test
+    void ingestTraceParsesUseCasesAndMissingFileErrors() throws Exception {
+        Path trace = temp.resolve("trace.log");
+        // kind：E=入口（新用例）N=普通调用（记边）X=退出
+        StringBuilder sb = new StringBuilder("# monoGomicro trace v1\n");
+        sb.append("11\tE\t1000\ta.A\tm1\n");
+        sb.append("11\tN\t2000\ta.B\tm2\n");
+        sb.append("11\tX\t3000\ta.B\tm2\n");
+        sb.append("11\tX\t4000\ta.A\tm1\n");
+        java.nio.file.Files.writeString(trace, sb.toString());
+
+        List<com.monogomicro.core.trace.UseCase> useCases = session.ingestTrace(trace);
+        assertTrue(useCases.size() >= 1, "至少切出一个用例");
+        // E 开用例不压栈，第一个 N 的 caller 为 null——classes 收集的是被调方
+        assertTrue(useCases.get(0).getClasses().contains("a.B"));
+
+        assertEquals("E_PROJECT_NOT_FOUND",
+                assertThrows(M2mException.class, () -> session.ingestTrace(temp.resolve("nope.log"))).getCode());
+    }
+
+    @Test
+    void savePartitionWhitelistAndDefault() throws Exception {
+        Path saved = session.savePartition(null);
+        assertEquals(temp.resolve("partition.json"), saved);
+        assertTrue(java.nio.file.Files.exists(saved));
+
+        assertEquals("E_OUT_OF_WORKSPACE",
+                assertThrows(M2mException.class,
+                        () -> session.savePartition(temp.resolve("../escape.json"))).getCode());
+    }
+
+    @Test
+    void generateRequiresProjectDirOnLoadSession() {
+        // load 会话未提供 projectDir：generate 必须明确报缺参
+        M2mException e = assertThrows(M2mException.class,
+                () -> session.generateServices(null, null, true, false));
+        assertEquals("E_BAD_PARAMS", e.getCode());
+    }
+
+    @Test
+    void generateOutDirConfinedToWorkspace() {
+        assertEquals("E_OUT_OF_WORKSPACE",
+                assertThrows(M2mException.class, () -> session.generateServices(
+                        temp, temp.resolve("../outside"), true, false)).getCode());
     }
 
     @Test

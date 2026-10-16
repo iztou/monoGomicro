@@ -115,6 +115,81 @@ class McpToolsTest {
         assertEquals(0, session.serviceOf().get("a.A"));
     }
 
+    /** 迷你 Maven 单体：sourcePath 与 setUp 的 report（a/A.java 等）对得上，generate 可跑通。 */
+    private Path miniMonolith() throws Exception {
+        Path project = temp.resolve("mono");
+        java.nio.file.Files.createDirectories(project.resolve("a"));
+        java.nio.file.Files.createDirectories(project.resolve("b"));
+        java.nio.file.Files.createDirectories(project.resolve("k"));
+        java.nio.file.Files.writeString(project.resolve("pom.xml"), """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                    <modelVersion>4.0.0</modelVersion>
+                    <groupId>com.demo</groupId><artifactId>demo</artifactId><version>1.0</version>
+                </project>
+                """);
+        java.nio.file.Files.writeString(project.resolve("a/A.java"), "package a;\npublic class A { B b; }");
+        java.nio.file.Files.writeString(project.resolve("a/B.java"), "package a;\npublic class B {}");
+        java.nio.file.Files.writeString(project.resolve("b/C.java"), "package b;\npublic class C {}");
+        java.nio.file.Files.writeString(project.resolve("k/K.java"), "package k;\npublic class K {}");
+        return project;
+    }
+
+    @Test
+    void generationLifecycleDryRunCacheInvalidationAndOverwrite() throws Exception {
+        Path project = miniMonolith();
+        Path out = temp.resolve("services"); // workspace 根 = temp（analysis.json 所在目录）
+
+        // dry-run：目标目录不产生任何文件
+        Map<String, Object> dry = tools.generateServices(project, out, true, false);
+        assertEquals(true, dry.get("dryRun"));
+        assertTrue((int) dry.get("services") >= 1);
+        assertTrue(!java.nio.file.Files.exists(out), "dry-run 不得写盘");
+
+        // 生成缓存生效
+        Map<String, Object> items = tools.migrationItems();
+        assertEquals(true, items.containsKey("total"));
+
+        // 分区编辑 → 缓存失效
+        tools.moveClass("a.A", 1);
+        assertEquals("E_NO_GENERATION",
+                assertThrows(M2mException.class, tools::migrationItems).getCode());
+
+        // 重新生成（真实落盘）：非空目标 + overwrite=false → 守卫透传
+        tools.generateServices(project, out, true, false);
+        java.nio.file.Files.createDirectories(out);
+        java.nio.file.Files.writeString(out.resolve("keep.txt"), "x");
+        assertEquals("E_OUTPUT_EXISTS",
+                assertThrows(M2mException.class,
+                        () -> tools.generateServices(project, out, false, false)).getCode());
+
+        // overwrite=true 正式生成，产出工程骨架
+        Map<String, Object> real = tools.generateServices(project, out, false, true);
+        assertEquals(false, real.get("dryRun"));
+        assertTrue(java.nio.file.Files.exists(out.resolve("pom.xml")),
+                "聚合 pom 应已生成");
+
+        // 重命名后 undo 能恢复
+        tools.renameService(0, "user-core");
+        tools.undo();
+    }
+
+    @Test
+    void metricsShapeAndRenameVisibility() {
+        Map<String, Object> m = tools.metrics();
+        assertEquals(true, m.containsKey("crossRatio"));
+        assertEquals(true, m.containsKey("perService"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> per = (List<Map<String, Object>>) m.get("perService");
+        assertEquals(2, per.size());
+
+        tools.renameService(1, "order-service");
+        Map<String, Object> summary = tools.partitionSummary();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> services = (List<Map<String, Object>>) summary.get("services");
+        assertEquals("order-service", services.get(1).get("name"));
+    }
+
     @Test
     void analyzeExposesClasspathStatusAndPersistWhitelist() throws Exception {
         // 迷你单体（不走 mvn classpath，提速）

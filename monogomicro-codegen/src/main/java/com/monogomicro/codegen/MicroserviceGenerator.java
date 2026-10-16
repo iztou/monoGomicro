@@ -752,6 +752,8 @@ public class MicroserviceGenerator {
 
     private void writeModulePom(Path moduleDir, String group, String aggArtifact, String artifact,
                                String version, String depsXml, boolean bootPlugin) throws IOException {
+        // 空模块（如无内核类拷贝的 common）没有前置步骤建目录，这里兜底
+        Files.createDirectories(moduleDir);
         StringBuilder sb = new StringBuilder();
         sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         sb.append("<project xmlns=\"http://maven.apache.org/POM/4.0.0\"\n");

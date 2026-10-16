@@ -68,9 +68,13 @@ Claude Desktop / 任意 MCP 客户端可对话式完成「分析 → 摘要 → 
 }
 ```
 
-工具一览（9 个）：`analyze_project` / `load_workspace` / `compute_partition`（流水线）；
-`get_partition_summary` / `list_classes` / `get_class_info` / `find_classes`（观察，渐进式披露，
-单工具返回 ≤4KB）；`move_class`（返回指标 delta）/ `undo`（编辑）。设计文档见 `docs/mcp-design.md`。
+工具一览（15 个）：`analyze_project` / `load_workspace` / `ingest_trace` / `compute_partition` /
+`generate_services`（默认 dry-run）/ `save_partition`（流水线）；`get_partition_summary` /
+`list_classes` / `get_class_info` / `find_classes` / `get_metrics` / `get_migration_items`
+（观察，渐进式披露，单工具返回 ≤4KB）；`move_class`（返回指标 delta）/ `rename_service` /
+`undo`（编辑）。另有资源 `m2m://analysis`、`m2m://partition` 供客户端按需拉取大对象。
+错误统一结构化（`{code, message, hint}`），写路径限制在 workspace 根内。
+设计文档见 `docs/mcp-design.md`；契约测试（真子进程 stdio JSON-RPC 全链路）随 `mvn verify` 运行。
 
 ## RuoYi 4.8.3 实测（285 源文件）
 

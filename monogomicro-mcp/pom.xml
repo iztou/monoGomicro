@@ -18,6 +18,10 @@
             <groupId>com.monogomicro</groupId>
             <artifactId>monogomicro-core</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.monogomicro</groupId>
+            <artifactId>monogomicro-codegen</artifactId>
+        </dependency>
         <!-- 官方 MCP Java SDK：排除默认 jackson3 绑定（其 annotations 仍用 com.fasterxml 包名，
              与项目 jackson2 在 shade 合并时同名冲突），改用 jackson2 绑定统一全家 -->
         <dependency>
@@ -55,6 +59,19 @@
     <build>
         <finalName>m2m-mcp</finalName>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <version>3.2.5</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>

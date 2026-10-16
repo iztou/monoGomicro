@@ -15,6 +15,13 @@ public class M2mException extends RuntimeException {
         this.hint = hint;
     }
 
+    /** 包装底层异常时保留原因链（日志/排障不丢栈）。 */
+    public M2mException(String code, String message, String hint, Throwable cause) {
+        super(message, cause);
+        this.code = code;
+        this.hint = hint;
+    }
+
     public String getCode() { return code; }
     public String getHint() { return hint; }
 }

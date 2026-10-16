@@ -1,5 +1,8 @@
 package com.monogomicro.mcp;
 
+import com.monogomicro.codegen.GenerateOptions;
+import com.monogomicro.codegen.GenerationResult;
+import com.monogomicro.codegen.MicroserviceGenerator;
 import com.monogomicro.core.M2mException;
 import com.monogomicro.core.graph.DependencyGraph;
 import com.monogomicro.core.model.AnalysisReport;
@@ -9,6 +12,8 @@ import com.monogomicro.core.parser.MavenClasspathResolver;
 import com.monogomicro.core.parser.ProjectScanner;
 import com.monogomicro.core.partition.PartitionEngine;
 import com.monogomicro.core.report.JsonIO;
+import com.monogomicro.core.trace.TraceAnalyzer;
+import com.monogomicro.core.trace.UseCase;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -24,17 +29,23 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  * 会话状态机（MCP 工具层的唯一可变状态）：
  *
  * EMPTY ──analyze──▶ ANALYZED ──computePartition──▶ PARTITIONED
- *   └────loadWorkspace────┘            ▲   moveClass / undo（编辑不降级状态）
+ *   └────loadWorkspace────┘            ▲   moveClass / renameService / undo（编辑不降级状态）
  *
  * - 单 workspace；读工具并行（读锁），写工具串行（写锁）
- * - undo 栈仅覆盖 moveClass（上限 {@link #UNDO_LIMIT}），computePartition / loadWorkspace / 重复 analyze 清栈
- * - 重复 analyze / loadWorkspace = 重开会话（清空全部衍生状态）
+ * - undo 栈覆盖 move 与 rename（上限 {@link #UNDO_LIMIT}），computePartition / loadWorkspace / 重复 analyze 清栈
+ * - 重复 analyze / loadWorkspace = 重开会话（清空全部衍生状态，含轨迹与生成缓存）
+ * - 生成缓存失效规则：任何分区编辑（move/rename/undo）后 get_migration_items 报 E_NO_GENERATION
  */
 final class WorkspaceSession {
 
     enum State { EMPTY, ANALYZED, PARTITIONED }
 
-    record Edit(String fqcn, int fromService) {}
+    sealed interface Edit permits MoveEdit, RenameEdit {}
+    record MoveEdit(String fqcn, int fromService) implements Edit {}
+    record RenameEdit(int serviceId, String oldName) implements Edit {}
+
+    record MoveOutcome(String fqcn, int fromService, int toService) {}
+    record GenerateOutcome(GenerationResult result, boolean dryRun, Path outDir) {}
 
     private static final int UNDO_LIMIT = 50;
 
@@ -51,6 +62,10 @@ final class WorkspaceSession {
     private Path workspaceRoot;
     /** 最近一次 analyze 的 classpath 解析状态（load 会话为 null） */
     private MavenClasspathResolver.ClasspathResult classpathResult;
+    /** 已导入的业务用例（ingest_trace），compute_partition 时融合；重开会话清空 */
+    private List<UseCase> useCases = List.of();
+    /** 生成缓存：分区被编辑后置 null（get_migration_items 报 E_NO_GENERATION） */
+    private GenerationResult generationResult;
 
     // ---------- 流水线（写锁） ----------
 
@@ -93,7 +108,7 @@ final class WorkspaceSession {
             this.workspaceRoot = this.projectDir.resolve("m2m-out");
             rebuildServiceIndex();
             this.state = State.ANALYZED;
-            this.undoStack.clear();
+            reopenDerived();
         } finally {
             lock.writeLock().unlock();
         }
@@ -140,7 +155,32 @@ final class WorkspaceSession {
             this.classpathResult = null; // load 会话无 classpath 上下文
             rebuildServiceIndex();
             this.state = State.PARTITIONED;
-            this.undoStack.clear();
+            reopenDerived();
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    /** 导入 agent 轨迹并解析为业务用例；下一次 compute_partition 融合。 */
+    List<UseCase> ingestTrace(Path tracePath) {
+        lock.writeLock().lock();
+        try {
+            requireAnalyzed();
+            if (!Files.isRegularFile(tracePath)) {
+                throw new M2mException("E_PROJECT_NOT_FOUND",
+                        "轨迹文件不存在：" + tracePath,
+                        "路径应为 agent 产出的 trace.log（-javaagent out 参数指定）");
+            }
+            List<UseCase> parsed;
+            try {
+                parsed = new TraceAnalyzer().analyze(tracePath);
+            } catch (IOException e) {
+                throw new M2mException("E_TRACE_FORMAT",
+                        "轨迹解析失败：" + e.getMessage(),
+                        "确认是 monogomicro-agent 产出的轨迹文件（每行 enter/exit 记录）");
+            }
+            this.useCases = parsed;
+            return parsed;
         } finally {
             lock.writeLock().unlock();
         }
@@ -156,18 +196,17 @@ final class WorkspaceSession {
             options.setMinCommunitySize(minSize);
             options.setMaxServices(maxServices);
             options.setSeed(seed);
-            this.partition = new PartitionEngine(graph, List.of(), options).run();
+            this.partition = new PartitionEngine(graph, useCases, options).run();
             rebuildServiceIndex();
             this.state = State.PARTITIONED;
             this.undoStack.clear();
+            this.generationResult = null;
         } finally {
             lock.writeLock().unlock();
         }
     }
 
     // ---------- 编辑（写锁） ----------
-
-    record MoveOutcome(String fqcn, int fromService, int toService) {}
 
     MoveOutcome moveClass(String fqcn, int targetService) {
         lock.writeLock().lock();
@@ -189,7 +228,7 @@ final class WorkspaceSession {
                 // no-op 移动：不压 undo 栈（否则内核类 -1→-1 后 undo 会重复 add 进内核列表）
                 return new MoveOutcome(fqcn, from, targetService);
             }
-            undoPush(new Edit(fqcn, from));
+            undoPush(new MoveEdit(fqcn, from));
             partition.getCommunities().forEach(c -> c.getClasses().remove(fqcn));
             if (targetService == -1) {
                 if (!partition.getKernelClasses().contains(fqcn)) {
@@ -205,7 +244,33 @@ final class WorkspaceSession {
                 }
             }
             serviceOf.put(fqcn, targetService);
+            generationResult = null;
             return new MoveOutcome(fqcn, from, targetService);
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    /** 改服务语义名（影响 get_partition_summary 展示与 generate 的 svc-&lt;tag&gt; 目录名）。 */
+    String renameService(int serviceId, String name) {
+        lock.writeLock().lock();
+        try {
+            requirePartitioned();
+            PartitionResult.Community target = partition.getCommunities().stream()
+                    .filter(c -> c.getId() == serviceId).findFirst().orElse(null);
+            if (target == null) {
+                throw new M2mException("E_UNKNOWN_SERVICE",
+                        "未知服务 id：" + serviceId,
+                        "服务 id 见 get_partition_summary 返回的 services[].id");
+            }
+            if (name == null || name.isBlank()) {
+                throw new M2mException("E_BAD_PARAMS", "服务名不能为空", null);
+            }
+            undoPush(new RenameEdit(serviceId, target.getName()));
+            String oldName = target.getName();
+            target.setName(name.trim());
+            generationResult = null;
+            return oldName;
         } finally {
             lock.writeLock().unlock();
         }
@@ -219,22 +284,93 @@ final class WorkspaceSession {
                 throw new M2mException("E_NOTHING_TO_UNDO", "没有可撤销的编辑", null);
             }
             Edit edit = undoStack.pop();
-            partition.getCommunities().forEach(c -> c.getClasses().remove(edit.fqcn()));
-            if (edit.fromService() == -1) {
-                if (!partition.getKernelClasses().contains(edit.fqcn())) {
-                    partition.getKernelClasses().add(edit.fqcn());
-                }
-            } else {
-                partition.getKernelClasses().remove(edit.fqcn());
-                for (PartitionResult.Community c : partition.getCommunities()) {
-                    if (c.getId() == edit.fromService()) {
-                        c.getClasses().add(edit.fqcn());
-                        break;
+            if (edit instanceof MoveEdit m) {
+                partition.getCommunities().forEach(c -> c.getClasses().remove(m.fqcn()));
+                if (m.fromService() == -1) {
+                    if (!partition.getKernelClasses().contains(m.fqcn())) {
+                        partition.getKernelClasses().add(m.fqcn());
+                    }
+                } else {
+                    partition.getKernelClasses().remove(m.fqcn());
+                    for (PartitionResult.Community c : partition.getCommunities()) {
+                        if (c.getId() == m.fromService()) {
+                            c.getClasses().add(m.fqcn());
+                            break;
+                        }
                     }
                 }
+                serviceOf.put(m.fqcn(), m.fromService());
+            } else if (edit instanceof RenameEdit r) {
+                partition.getCommunities().stream()
+                        .filter(c -> c.getId() == r.serviceId())
+                        .findFirst().ifPresent(c -> c.setName(r.oldName()));
             }
-            serviceOf.put(edit.fqcn(), edit.fromService());
+            generationResult = null;
             return edit;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    // ---------- 生成与落盘（写锁） ----------
+
+    GenerateOutcome generateServices(Path projectDirOverride, Path outDir,
+                                     boolean dryRun, boolean overwrite) {
+        lock.writeLock().lock();
+        try {
+            requirePartitioned();
+            Path effectiveProject = projectDirOverride != null
+                    ? projectDirOverride.toAbsolutePath() : projectDir;
+            if (effectiveProject == null) {
+                throw new M2mException("E_BAD_PARAMS",
+                        "缺少单体项目根目录：load_workspace 会话未提供 projectDir，generate 需要源码与 pom",
+                        "generate_services 时显式传入 projectDir，或 load_workspace 时提供");
+            }
+            if (!Files.isDirectory(effectiveProject)) {
+                throw new M2mException("E_PROJECT_NOT_FOUND",
+                        "projectDir 不存在：" + effectiveProject, "检查单体项目根目录路径");
+            }
+            Path effectiveOut = outDir != null ? outDir : workspaceRoot.resolve("services");
+            Path normalized = effectiveOut.toAbsolutePath().normalize();
+            if (!normalized.startsWith(workspaceRoot)) {
+                throw new M2mException("E_OUT_OF_WORKSPACE",
+                        "outDir 越出 workspace 根：" + effectiveOut,
+                        "输出目录必须位于 workspace 根（" + workspaceRoot + "）内");
+            }
+            GenerationResult result;
+            try {
+                // 每次调用新实例：MicroserviceGenerator 持有一次性生成状态，dry-run 后正式生成不能复用
+                result = new MicroserviceGenerator(report, partition, effectiveProject)
+                        .generate(normalized, new GenerateOptions(dryRun, overwrite));
+            } catch (M2mException e) {
+                throw e; // E_OUTPUT_EXISTS 等结构化错误透传
+            } catch (Exception e) {
+                throw new M2mException("E_INTERNAL", "生成失败：" + e.getMessage(), null, e);
+            }
+            this.generationResult = result;
+            return new GenerateOutcome(result, dryRun, normalized);
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    Path savePartition(Path path) {
+        lock.writeLock().lock();
+        try {
+            requirePartitioned();
+            Path effective = path != null ? path : workspaceRoot.resolve("partition.json");
+            Path normalized = effective.toAbsolutePath().normalize();
+            if (!normalized.startsWith(workspaceRoot)) {
+                throw new M2mException("E_OUT_OF_WORKSPACE",
+                        "保存路径越出 workspace 根：" + effective,
+                        "保存路径必须位于 workspace 根（" + workspaceRoot + "）内");
+            }
+            try {
+                JsonIO.write(partition, normalized);
+            } catch (IOException e) {
+                throw new M2mException("E_INTERNAL", "partition.json 落盘失败：" + e.getMessage(), null);
+            }
+            return normalized;
         } finally {
             lock.writeLock().unlock();
         }
@@ -268,6 +404,8 @@ final class WorkspaceSession {
     Path workspaceRoot() { return workspaceRoot; }
     int undoDepth() { return undoStack.size(); }
     MavenClasspathResolver.ClasspathResult classpathResult() { return classpathResult; }
+    List<UseCase> useCases() { return useCases; }
+    GenerationResult generationResult() { return generationResult; }
 
     // ---------- 内部 ----------
 
@@ -283,6 +421,13 @@ final class WorkspaceSession {
             throw new M2mException("E_NO_PARTITION", "会话中尚无分区结果",
                     "先调用 compute_partition 或 load_workspace（带 partition.json）");
         }
+    }
+
+    /** 重开会话：清空轨迹、undo、生成缓存（analyze / load 共用）。 */
+    private void reopenDerived() {
+        this.useCases = List.of();
+        this.undoStack.clear();
+        this.generationResult = null;
     }
 
     private void rebuildServiceIndex() {
