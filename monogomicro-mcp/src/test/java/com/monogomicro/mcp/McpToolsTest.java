@@ -114,4 +114,29 @@ class McpToolsTest {
         assertEquals("a.A", restored.get("fqcn"));
         assertEquals(0, session.serviceOf().get("a.A"));
     }
+
+    @Test
+    void analyzeExposesClasspathStatusAndPersistWhitelist() throws Exception {
+        // 迷你单体（不走 mvn classpath，提速）
+        Path project = temp.resolve("proj");
+        java.nio.file.Files.createDirectories(project.resolve("src/main/java/com/example"));
+        java.nio.file.Files.writeString(project.resolve("src/main/java/com/example/A.java"),
+                "package com.example;\nclass A {}");
+
+        WorkspaceSession fresh = new WorkspaceSession();
+        McpTools freshTools = new McpTools(fresh);
+        Map<String, Object> r = freshTools.analyzeProject(project, List.of("com.example"), false, null);
+        assertEquals(true, r.containsKey("jarsResolved"));
+        assertEquals(false, r.get("classpathDegraded")); // 未启用 maven classpath，不算降级
+
+        // workspace 根 = <project>/m2m-out；落到其外必须拒绝
+        M2mException e = assertThrows(M2mException.class, () -> freshTools.analyzeProject(
+                project, List.of("com.example"), false, temp.resolve("escape.json")));
+        assertEquals("E_OUT_OF_WORKSPACE", e.getCode());
+
+        // 根内落盘放行
+        Map<String, Object> ok = freshTools.analyzeProject(project, List.of("com.example"), false,
+                project.resolve("m2m-out/analysis.json"));
+        assertTrue(String.valueOf(ok.get("analysisPersisted")).endsWith("m2m-out/analysis.json"));
+    }
 }

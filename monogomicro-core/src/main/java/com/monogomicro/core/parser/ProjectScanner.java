@@ -62,6 +62,10 @@ public class ProjectScanner {
     private final Set<String> ambiguousSimpleNames = new HashSet<>();
     private Set<String> registeredClasses;
 
+    /** 最近一次 scan 的 classpath 解析结果（useMavenClasspath=false 时为 null）——
+     *  供上层判断精度降级：jars=0 不代表项目没依赖，可能是 mvn 不可用/超时。 */
+    private MavenClasspathResolver.ClasspathResult classpathResult;
+
     public ProjectScanner(List<String> packagePrefixes, boolean useMavenClasspath) {
         this(packagePrefixes, useMavenClasspath, DEFAULT_MAX_SOURCE_FILES, DEFAULT_MAX_EDGES);
     }
@@ -74,10 +78,17 @@ public class ProjectScanner {
         this.maxEdges = maxEdges;
     }
 
+    /** 最近一次 scan 的 classpath 解析结果；useMavenClasspath=false 或尚未 scan 时为 null。 */
+    public MavenClasspathResolver.ClasspathResult classpathResult() {
+        return classpathResult;
+    }
+
     public DependencyGraph scan(Path projectDir) throws IOException {
         List<Path> sourceRoots = findSourceRoots(projectDir);
         if (sourceRoots.isEmpty()) {
-            throw new IOException("在 " + projectDir + " 下没有找到任何 src/main/java 源码目录");
+            throw new com.monogomicro.core.M2mException("E_PROJECT_NOT_FOUND",
+                    "在 " + projectDir + " 下没有找到任何 src/main/java 源码目录",
+                    "确认 projectDir 指向 Maven/Gradle 单体的根目录");
         }
         log.info("发现 {} 个源码根目录", sourceRoots.size());
 
@@ -86,8 +97,10 @@ public class ProjectScanner {
             typeSolver.add(new JavaParserTypeSolver(root));
         }
         typeSolver.add(new ReflectionTypeSolver(true));
+        classpathResult = null;
         if (useMavenClasspath) {
-            for (Path jar : MavenClasspathResolver.resolve(projectDir)) {
+            classpathResult = MavenClasspathResolver.resolveWithStatus(projectDir);
+            for (Path jar : classpathResult.jars()) {
                 try {
                     typeSolver.add(JarTypeSolver.getJarTypeSolver(jar.toString()));
                 } catch (IOException e) {
@@ -148,7 +161,9 @@ public class ProjectScanner {
         }
         log.info("注册 {} 个项目类", graph.nodeCount());
         if (graph.nodeCount() == 0) {
-            throw new IOException("没有匹配包前缀 " + packagePrefixes + " 的类，请检查 --package 参数");
+            throw new com.monogomicro.core.M2mException("E_PKG_NO_MATCH",
+                    "没有匹配包前缀 " + packagePrefixes + " 的类",
+                    "检查包前缀是否与项目实际包名一致（可先试一二级包名，如 com.ruoyi）");
         }
         registeredClasses = new TreeSet<>(java.util.Comparator.reverseOrder());
         for (ClassInfo c : graph.nodes()) {

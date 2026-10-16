@@ -120,7 +120,8 @@ slf4j → simple 绑定输出到 **stderr**。
 #### `analyze_project` — 静态分析目标单体，载入会话
 - 入参：`projectDir`(string, 绝对路径)、`packagePrefixes`(string[], 业务包前缀)、
   `useMavenClasspath`(bool, 默认 true)、`persistAnalysisPath`(string?, 可选落盘路径)
-- 返回：`{classes: 290, edges: 980, jarsResolved: 92, modules: ["ruoyi-admin", …], durationMs}`
+- 返回：`{classes: 290, edges: 980, jarsResolved: 92, classpathDegraded: false, modules: ["ruoyi-admin", …], durationMs}`
+  —— `classpathDegraded=true`（含 detail）表示 mvn 解析降级，依赖图精度已受影响，LLM 必须知情
 - 错误：`E_PROJECT_NOT_FOUND` / `E_PKG_NO_MATCH` / `E_MAVEN_MISSING`（hint: 加 `useMavenClasspath=false` 重试）/ `E_PARSE_FAILED`（附文件与行号）
 - 进度：按模块/文件粒度发 progress 通知
 - 状态：`EMPTY → ANALYZED`
@@ -251,6 +252,7 @@ EMPTY ──analyze_project──▶ ANALYZED ──compute_partition──▶ P
 | E_PKG_NO_MATCH | 包前缀在项目中无匹配类 | 列出项目中实际出现的前两级包名供修正 |
 | E_MAVEN_MISSING | useMavenClasspath=true 且 mvn 不在 PATH | 重试时置 false |
 | E_PARSE_FAILED / E_TRACE_FORMAT | 解析失败 | 附文件/行号/样例行 |
+| E_BAD_PARAMS | 缺少必填参数/参数类型错误 | 指明缺的字段，对照 inputSchema 补全 |
 | E_SCAN_LIMIT | 源文件数/边数超防御上限（core `ProjectScanner` 已实现） | 确认 projectDir 指向单体而非过大目录；超大项目说明可调上限构造参数 |
 | E_UNKNOWN_CLASS / E_UNKNOWN_SERVICE / E_NOTHING_TO_UNDO | 编辑类参数错 | 给出相近候选（前缀匹配） |
 | E_OUTPUT_EXISTS / E_OUT_OF_WORKSPACE | 生成写盘越界/冲突 | 说明 overwrite 语义 |
@@ -285,8 +287,8 @@ EMPTY ──analyze_project──▶ ANALYZED ──compute_partition──▶ P
 
 ## 12. 安全边界
 
-1. **写路径白名单**：`generate_services.outDir` 与 `save_partition.path` 必须位于
-   workspace 根内，规范化后校验，拒绝 `..` 逃逸。**workspace 根在会话创建时定死**：
+1. **写路径白名单**：`generate_services.outDir`、`save_partition.path` 与 `analyze_project.persistAnalysisPath`
+   必须位于 workspace 根内，规范化后校验，拒绝 `..` 逃逸。**workspace 根在会话创建时定死**：
    analyze 会话默认 `<projectDir>/m2m-out`（与 CLI 的 `m2m-out/` 约定一致），
    load 会话默认 `analysisPath` 所在目录，均可显式指定；全文档所称 `<workspace>` 即此根。
 2. **dry-run 默认**：`generate_services` 默认 `dryRun=true`，只返回统计与迁移项；真写盘需显式

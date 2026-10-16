@@ -25,7 +25,21 @@ import java.util.concurrent.Callable;
 public final class Main implements Callable<Integer> {
 
     public static void main(String[] args) {
-        int exit = new CommandLine(new Main()).execute(args);
+        int exit = new CommandLine(new Main())
+                .setExecutionExceptionHandler((ex, cmd, parseResult) -> {
+                    if (ex instanceof com.monogomicro.core.M2mException e) {
+                        // 结构化业务错误：打印 code + hint，不打堆栈
+                        System.err.println("错误 [" + e.getCode() + "] " + e.getMessage());
+                        if (e.getHint() != null) {
+                            System.err.println("提示: " + e.getHint());
+                        }
+                    } else {
+                        System.err.println("错误: " + ex.getMessage());
+                    }
+                    cmd.usage(System.err);
+                    return 2;
+                })
+                .execute(args);
         System.exit(exit);
     }
 

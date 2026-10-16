@@ -5,6 +5,7 @@ import com.monogomicro.core.graph.DependencyGraph;
 import com.monogomicro.core.model.AnalysisReport;
 import com.monogomicro.core.model.PartitionOptions;
 import com.monogomicro.core.model.PartitionResult;
+import com.monogomicro.core.parser.MavenClasspathResolver;
 import com.monogomicro.core.parser.ProjectScanner;
 import com.monogomicro.core.partition.PartitionEngine;
 import com.monogomicro.core.report.JsonIO;
@@ -48,6 +49,8 @@ final class WorkspaceSession {
     private Map<String, Integer> serviceOf = new LinkedHashMap<>();
     private Path projectDir;
     private Path workspaceRoot;
+    /** 最近一次 analyze 的 classpath 解析状态（load 会话为 null） */
+    private MavenClasspathResolver.ClasspathResult classpathResult;
 
     // ---------- 流水线（写锁） ----------
 
@@ -60,19 +63,23 @@ final class WorkspaceSession {
                         "项目目录不存在：" + projectDir,
                         "检查 projectDir 是否为单体项目根目录的绝对路径");
             }
-            DependencyGraph scanned;
-            try {
-                scanned = new ProjectScanner(packagePrefixes, useMavenClasspath).scan(projectDir);
-            } catch (IOException e) {
-                String msg = e.getMessage() == null ? "" : e.getMessage();
-                if (msg.contains("没有找到任何")) {
-                    throw new M2mException("E_PROJECT_NOT_FOUND", msg, "确认目录结构包含 src/main/java");
-                }
-                if (msg.contains("没有匹配包前缀")) {
-                    throw new M2mException("E_PKG_NO_MATCH", msg, "检查 --package 前缀是否与项目实际包名一致");
-                }
-                throw new M2mException("E_INTERNAL", "静态分析失败：" + msg, null);
+            if (useMavenClasspath && Files.isRegularFile(projectDir.resolve("pom.xml"))
+                    && !MavenClasspathResolver.mvnAvailable()) {
+                // fail-fast：白跑完整扫描再报错太浪费（大项目 analyze 含 mvn 调用可达数分钟）
+                throw new M2mException("E_MAVEN_MISSING",
+                        "useMavenClasspath=true 但 mvn 不在 PATH 或不可执行",
+                        "安装/配置 mvn 后重试；或置 useMavenClasspath=false（精度降级：仅源码+JDK 反射解析）");
             }
+            DependencyGraph scanned;
+            ProjectScanner scanner = new ProjectScanner(packagePrefixes, useMavenClasspath);
+            try {
+                scanned = scanner.scan(projectDir);
+            } catch (M2mException e) {
+                throw e; // core 已结构化（E_PROJECT_NOT_FOUND / E_PKG_NO_MATCH / E_SCAN_LIMIT），直接透传
+            } catch (IOException e) {
+                throw new M2mException("E_INTERNAL", "静态分析失败：" + e.getMessage(), null);
+            }
+            this.classpathResult = scanner.classpathResult();
             AnalysisReport fresh = new AnalysisReport();
             fresh.setProject(projectDir.toAbsolutePath().toString());
             fresh.setPackagePrefixes(List.copyOf(packagePrefixes));
@@ -104,7 +111,7 @@ final class WorkspaceSession {
             try {
                 loaded = JsonIO.read(analysisPath, AnalysisReport.class);
             } catch (IOException e) {
-                throw new M2mException("E_TRACE_FORMAT",
+                throw new M2mException("E_PARSE_FAILED",
                         "analysis.json 解析失败：" + e.getMessage(), "确认是 m2m analyze 产出的文件");
             }
             PartitionResult loadedPartition = null;
@@ -116,7 +123,7 @@ final class WorkspaceSession {
                 try {
                     loadedPartition = JsonIO.read(partitionPath, PartitionResult.class);
                 } catch (IOException e) {
-                    throw new M2mException("E_TRACE_FORMAT",
+                    throw new M2mException("E_PARSE_FAILED",
                             "partition.json 解析失败：" + e.getMessage(), "确认是 m2m partition 产出的文件");
                 }
             }
@@ -130,6 +137,7 @@ final class WorkspaceSession {
             this.partition = effective;
             this.projectDir = projectDir == null ? null : projectDir.toAbsolutePath();
             this.workspaceRoot = analysisPath.toAbsolutePath().getParent();
+            this.classpathResult = null; // load 会话无 classpath 上下文
             rebuildServiceIndex();
             this.state = State.PARTITIONED;
             this.undoStack.clear();
@@ -177,6 +185,10 @@ final class WorkspaceSession {
                         "服务 id 见 get_partition_summary 返回的 services[].id；-1 表示移入共享内核");
             }
             int from = current;
+            if (from == targetService) {
+                // no-op 移动：不压 undo 栈（否则内核类 -1→-1 后 undo 会重复 add 进内核列表）
+                return new MoveOutcome(fqcn, from, targetService);
+            }
             undoPush(new Edit(fqcn, from));
             partition.getCommunities().forEach(c -> c.getClasses().remove(fqcn));
             if (targetService == -1) {
@@ -209,7 +221,9 @@ final class WorkspaceSession {
             Edit edit = undoStack.pop();
             partition.getCommunities().forEach(c -> c.getClasses().remove(edit.fqcn()));
             if (edit.fromService() == -1) {
-                partition.getKernelClasses().add(edit.fqcn());
+                if (!partition.getKernelClasses().contains(edit.fqcn())) {
+                    partition.getKernelClasses().add(edit.fqcn());
+                }
             } else {
                 partition.getKernelClasses().remove(edit.fqcn());
                 for (PartitionResult.Community c : partition.getCommunities()) {
@@ -253,6 +267,7 @@ final class WorkspaceSession {
     Path projectDir() { return projectDir; }
     Path workspaceRoot() { return workspaceRoot; }
     int undoDepth() { return undoStack.size(); }
+    MavenClasspathResolver.ClasspathResult classpathResult() { return classpathResult; }
 
     // ---------- 内部 ----------
 

@@ -103,6 +103,19 @@ class WorkspaceSessionTest {
     }
 
     @Test
+    void noOpMoveDoesNotPushUndoOrDuplicateKernel() {
+        // 内核类 -1→-1 是 no-op：不得压 undo 栈，否则 undo 时内核列表出现重复项
+        WorkspaceSession.MoveOutcome noop = session.moveClass("k.K", -1);
+        assertEquals(-1, noop.fromService());
+        assertEquals(0, session.undoDepth());
+        assertEquals(List.of("k.K"), session.partition().getKernelClasses());
+
+        // 服务内移动同理
+        session.moveClass("a.A", 0);
+        assertEquals(0, session.undoDepth());
+    }
+
+    @Test
     void unknownClassAndServiceAreStructuredErrors() {
         assertEquals("E_UNKNOWN_CLASS",
                 assertThrows(M2mException.class, () -> session.moveClass("no.Such", 0)).getCode());

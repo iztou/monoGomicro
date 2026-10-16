@@ -6,6 +6,7 @@ import com.monogomicro.core.model.AnalysisReport;
 import com.monogomicro.core.model.ClassInfo;
 import com.monogomicro.core.model.DependencyEdge;
 import com.monogomicro.core.model.PartitionResult;
+import com.monogomicro.core.parser.MavenClasspathResolver;
 import com.monogomicro.core.partition.PartitionMetrics;
 import com.monogomicro.core.report.JsonIO;
 
@@ -46,8 +47,16 @@ final class McpTools {
         session.analyze(projectDir, packagePrefixes, useMavenClasspath);
         AnalysisReport report = session.read(session::report);
         if (persistAnalysisPath != null) {
+            // 写路径白名单（设计 §12）：落盘必须在 workspace 根内，拒绝逃逸
+            Path root = session.read(session::workspaceRoot);
+            Path target = persistAnalysisPath.toAbsolutePath().normalize();
+            if (root == null || !target.startsWith(root)) {
+                throw new M2mException("E_OUT_OF_WORKSPACE",
+                        "persistAnalysisPath 越出 workspace 根：" + persistAnalysisPath,
+                        "落盘路径必须位于 workspace 根（默认 <projectDir>/m2m-out）内");
+            }
             try {
-                JsonIO.write(report, persistAnalysisPath);
+                JsonIO.write(report, target);
             } catch (IOException e) {
                 throw new M2mException("E_INTERNAL", "analysis.json 落盘失败：" + e.getMessage(), null);
             }
@@ -57,11 +66,31 @@ final class McpTools {
         out.put("edges", report.getEdgeCount());
         out.put("totalWeight", report.getTotalWeight());
         out.put("mavenModules", report.getMavenModules());
+        // classpath 降级可见性：jarsResolved=0 且 degraded=true 时，依赖图精度已受影响
+        ClasspathResultView cp = classpathView();
+        out.put("jarsResolved", cp.jars());
+        out.put("classpathDegraded", cp.degraded());
+        if (cp.degraded() && cp.detail() != null) {
+            out.put("classpathDetail", cp.detail());
+        }
         out.put("analysisPersisted", persistAnalysisPath == null ? null
-                : persistAnalysisPath.toAbsolutePath().toString());
+                : persistAnalysisPath.toAbsolutePath().normalize().toString());
         out.put("durationMs", System.currentTimeMillis() - start);
         out.put("next", "compute_partition 计算分区建议");
         return out;
+    }
+
+    private record ClasspathResultView(int jars, boolean degraded, String detail) {}
+
+    private ClasspathResultView classpathView() {
+        return session.read(() -> {
+            var r = session.classpathResult();
+            if (r == null) {
+                return new ClasspathResultView(0, false, null); // 未启用 maven classpath 或 load 会话
+            }
+            boolean degraded = r.status() != MavenClasspathResolver.Status.OK;
+            return new ClasspathResultView(r.jars().size(), degraded, r.detail());
+        });
     }
 
     Map<String, Object> loadWorkspace(Path analysisPath, Path partitionPath, Path projectDir) {
@@ -152,18 +181,17 @@ final class McpTools {
             Integer service = session.serviceOf().get(fqcn);
             DependencyGraph graph = session.graph();
 
-            List<Map<String, Object>> outEdges = graph.edges().stream()
-                    .filter(e -> fqcn.equals(e.getFrom()))
-                    .sorted(Comparator.comparingInt(DependencyEdge::getWeight).reversed())
-                    .limit(EDGE_TOP_N)
+            // 出边 O(1) 查邻接表；入边一次全表扫描——避免旧实现的 4 次全表重建
+            List<DependencyEdge> outs = graph.outEdges(fqcn).stream()
+                    .sorted(Comparator.comparingInt(DependencyEdge::getWeight).reversed()).toList();
+            List<DependencyEdge> ins = graph.inEdges(fqcn).stream()
+                    .sorted(Comparator.comparingInt(DependencyEdge::getWeight).reversed()).toList();
+            List<Map<String, Object>> outEdges = outs.stream().limit(EDGE_TOP_N)
                     .map(e -> edgeView(e, true)).toList();
-            long outTotal = graph.edges().stream().filter(e -> fqcn.equals(e.getFrom())).count();
-            List<Map<String, Object>> inEdges = graph.edges().stream()
-                    .filter(e -> fqcn.equals(e.getTo()))
-                    .sorted(Comparator.comparingInt(DependencyEdge::getWeight).reversed())
-                    .limit(EDGE_TOP_N)
+            List<Map<String, Object>> inEdges = ins.stream().limit(EDGE_TOP_N)
                     .map(e -> edgeView(e, false)).toList();
-            long inTotal = graph.edges().stream().filter(e -> fqcn.equals(e.getTo())).count();
+            long outTotal = outs.size();
+            long inTotal = ins.size();
 
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("fqcn", info.getFqcn());
@@ -295,12 +323,14 @@ final class McpTools {
         return c == null ? "service:" + id : "service:" + id + "(" + c.getName() + ")";
     }
 
-    /** 最强依赖去向分布：「12/18 条边指向 service:3(user)」式的归属解释。 */
+    /** 最强依赖去向分布：「12/18 条边连接 service:3(user)」式的归属解释。 */
     private String neighborConcentration(String fqcn) {
         record Count(int service, int n) {}
         Map<Integer, Integer> byService = new LinkedHashMap<>();
-        session.graph().edges().stream()
-                .filter(e -> fqcn.equals(e.getFrom()) || fqcn.equals(e.getTo()))
+        // 出边查邻接表 + 入边一次扫描，不重建全表
+        java.util.stream.Stream.concat(
+                session.graph().outEdges(fqcn).stream(),
+                session.graph().inEdges(fqcn).stream())
                 .forEach(e -> {
                     String other = fqcn.equals(e.getFrom()) ? e.getTo() : e.getFrom();
                     Integer s = session.serviceOf().getOrDefault(other, -2);

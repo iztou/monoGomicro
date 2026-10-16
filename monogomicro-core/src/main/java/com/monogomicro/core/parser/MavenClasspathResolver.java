@@ -24,10 +24,34 @@ public class MavenClasspathResolver {
     private static final Logger log = LoggerFactory.getLogger(MavenClasspathResolver.class);
     private static final String CP_FILE = "m2m-cp.txt";
 
+    /** 解析状态：OK 全部成功；PARTIAL 部分模块失败已降级合并；NO_POM 目标无 pom.xml；
+     *  UNAVAILABLE mvn 不可执行（未安装/不在 PATH）；TIMEOUT 执行超时；EMPTY 执行完但无产出。 */
+    public enum Status { OK, PARTIAL, NO_POM, UNAVAILABLE, TIMEOUT, EMPTY }
+
+    /** 解析结果：jar 清单 + 状态 + 细节。状态供上层（MCP/CLI）判断是否提示精度降级。 */
+    public record ClasspathResult(List<Path> jars, Status status, String detail) {}
+
+    /** 兼容入口：只要 jar 清单（既有 CLI 行为——静默降级继续解析）。 */
     public static List<Path> resolve(Path projectDir) {
+        return resolveWithStatus(projectDir).jars();
+    }
+
+    /** 轻量探测 mvn 是否可执行，供上层在昂贵扫描前 fail-fast（E_MAVEN_MISSING）。 */
+    public static boolean mvnAvailable() {
+        try {
+            return new ProcessBuilder("mvn", "-v").redirectErrorStream(true).start().waitFor() == 0;
+        } catch (IOException e) {
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    public static ClasspathResult resolveWithStatus(Path projectDir) {
         if (!Files.isRegularFile(projectDir.resolve("pom.xml"))) {
             log.warn("目标目录没有 pom.xml，跳过 Maven classpath 解析（仅源码+JDK 反射解析）");
-            return List.of();
+            return new ClasspathResult(List.of(), Status.NO_POM, "目标目录没有 pom.xml");
         }
         cleanStaleOutputs(projectDir);
         int exit = 1;
@@ -43,12 +67,16 @@ public class MavenClasspathResolver {
             if (!done) {
                 p.destroyForcibly();
                 log.warn("mvn dependency:build-classpath 超时，跳过 classpath 解析");
-                return List.of();
+                return new ClasspathResult(List.of(), Status.TIMEOUT, "mvn 执行超过 5 分钟");
             }
             exit = p.exitValue();
-        } catch (IOException | InterruptedException e) {
+        } catch (IOException e) {
             log.warn("执行 mvn 失败：{}，跳过 classpath 解析", e.getMessage());
-            return List.of();
+            return new ClasspathResult(List.of(), Status.UNAVAILABLE, "mvn 不可执行：" + e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("执行 mvn 被中断，跳过 classpath 解析");
+            return new ClasspathResult(List.of(), Status.UNAVAILABLE, "mvn 执行被中断");
         }
 
         Set<Path> jars = new LinkedHashSet<>();
@@ -73,11 +101,14 @@ public class MavenClasspathResolver {
         }
         if (jars.isEmpty()) {
             log.warn("classpath 解析无产出（mvn 退出码 {}），使用源码+import 回退解析", exit);
-        } else {
-            log.info("Maven classpath：{} 个依赖 jar{}",
-                    jars.size(), exit == 0 ? "" : "（部分模块失败，已降级合并可用部分）");
+            return new ClasspathResult(List.of(), Status.EMPTY, "mvn 退出码 " + exit + "，无 classpath 产出");
         }
-        return new ArrayList<>(jars);
+        log.info("Maven classpath：{} 个依赖 jar{}",
+                jars.size(), exit == 0 ? "" : "（部分模块失败，已降级合并可用部分）");
+        return exit == 0
+                ? new ClasspathResult(new ArrayList<>(jars), Status.OK, null)
+                : new ClasspathResult(new ArrayList<>(jars), Status.PARTIAL,
+                        "mvn 退出码 " + exit + "，部分模块失败已降级合并");
     }
 
     private static void cleanStaleOutputs(Path projectDir) {

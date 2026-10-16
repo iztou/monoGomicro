@@ -159,7 +159,7 @@ public final class McpServerMain {
                                 "targetService", Map.of("type", "integer", "description", "服务 id；-1 = 共享内核")),
                         "required", List.of("fqcn", "targetService")),
                 false,
-                        args -> tools.moveClass(str(args, "fqcn"), intOr(args, "targetService", Integer.MIN_VALUE))));
+                        args -> tools.moveClass(str(args, "fqcn"), reqInt(args, "targetService"))));
 
         specs.add(tool("undo",
                 "撤销最近一次 move_class（栈深上限 50）。",
@@ -239,9 +239,20 @@ public final class McpServerMain {
     private static String str(Map<String, Object> args, String key) {
         Object v = args.get(key);
         if (v == null) {
-            throw new M2mException("E_INTERNAL", "缺少必填参数：" + key, null);
+            throw new M2mException("E_BAD_PARAMS", "缺少必填参数：" + key,
+                    "对照工具 inputSchema 的 required 字段补全后重试");
         }
         return String.valueOf(v);
+    }
+
+    /** 必填整数参数（缺省时明确报参数错误，不用魔法值兜底误导 LLM）。 */
+    private static int reqInt(Map<String, Object> args, String key) {
+        Object v = args.get(key);
+        if (!(v instanceof Number n)) {
+            throw new M2mException("E_BAD_PARAMS", "缺少必填整数参数：" + key,
+                    "对照工具 inputSchema 的 required 字段补全后重试");
+        }
+        return n.intValue();
     }
 
     private static String strOr(Map<String, Object> args, String key, String def) {
@@ -262,7 +273,7 @@ public final class McpServerMain {
     private static List<String> strList(Map<String, Object> args, String key) {
         Object v = args.get(key);
         if (!(v instanceof List<?> list) || list.isEmpty()) {
-            throw new M2mException("E_INTERNAL", "参数 " + key + " 须为非空字符串数组", null);
+            throw new M2mException("E_BAD_PARAMS", "参数 " + key + " 须为非空字符串数组", null);
         }
         List<String> out = new ArrayList<>();
         for (Object o : list) {
