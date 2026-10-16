@@ -49,16 +49,29 @@ public class ProjectScanner {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectScanner.class);
 
+    /** 防御性上限：误把根目录/超大 monorepo 指进来时快速失败，而不是耗尽内存。 */
+    public static final int DEFAULT_MAX_SOURCE_FILES = 20_000;
+    public static final int DEFAULT_MAX_EDGES = 500_000;
+
     private final List<String> packagePrefixes;
     private final boolean useMavenClasspath;
+    private final int maxSourceFiles;
+    private final int maxEdges;
 
     private final Map<String, String> simpleNameToFqcn = new HashMap<>();
     private final Set<String> ambiguousSimpleNames = new HashSet<>();
     private Set<String> registeredClasses;
 
     public ProjectScanner(List<String> packagePrefixes, boolean useMavenClasspath) {
+        this(packagePrefixes, useMavenClasspath, DEFAULT_MAX_SOURCE_FILES, DEFAULT_MAX_EDGES);
+    }
+
+    public ProjectScanner(List<String> packagePrefixes, boolean useMavenClasspath,
+                          int maxSourceFiles, int maxEdges) {
         this.packagePrefixes = packagePrefixes;
         this.useMavenClasspath = useMavenClasspath;
+        this.maxSourceFiles = maxSourceFiles;
+        this.maxEdges = maxEdges;
     }
 
     public DependencyGraph scan(Path projectDir) throws IOException {
@@ -90,6 +103,7 @@ public class ProjectScanner {
 
         Map<String, ParsedUnit> units = new HashMap<>();
         DependencyGraph graph = new DependencyGraph();
+        int scannedFiles = 0;
         for (Path root : sourceRoots) {
             String moduleName = moduleNameOf(projectDir, root);
             try (Stream<Path> files = Files.walk(root)) {
@@ -97,6 +111,12 @@ public class ProjectScanner {
                         .filter(f -> f.toString().endsWith(".java"))
                         .filter(f -> !f.toString().contains("/target/"))
                         .toList();
+                scannedFiles += javaFiles.size();
+                if (scannedFiles > maxSourceFiles) {
+                    throw new com.monogomicro.core.M2mException("E_SCAN_LIMIT",
+                            "源文件数超上限：" + scannedFiles + " > " + maxSourceFiles,
+                            "确认 projectDir 指向的是目标单体而非过大的目录；确属超大项目可用构造参数调大上限");
+                }
                 for (Path file : javaFiles) {
                     ParseResult<CompilationUnit> result = parser.parse(file);
                     CompilationUnit cu = result.getResult().orElse(null);
@@ -135,7 +155,14 @@ public class ProjectScanner {
             registeredClasses.add(c.getFqcn());
         }
 
-        units.values().forEach(u -> extractEdges(u, graph));
+        for (ParsedUnit u : units.values()) {
+            extractEdges(u, graph);
+            if (graph.edgeCount() > maxEdges) {
+                throw new com.monogomicro.core.M2mException("E_SCAN_LIMIT",
+                        "依赖边数超上限：" + graph.edgeCount() + " > " + maxEdges,
+                        "依赖规模超出预期；可收窄 --package 范围或用构造参数调大上限");
+            }
+        }
         log.info("依赖图完成：{} 节点 / {} 边 / 总权重 {}", graph.nodeCount(), graph.edgeCount(), graph.totalWeight());
         return graph;
     }

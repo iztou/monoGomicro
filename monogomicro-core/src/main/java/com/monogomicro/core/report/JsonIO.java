@@ -3,6 +3,8 @@ package com.monogomicro.core.report;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.monogomicro.core.model.AnalysisReport;
+import com.monogomicro.core.model.PartitionResult;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -19,6 +21,12 @@ public final class JsonIO {
     }
 
     public static void write(Object value, Path file) throws IOException {
+        // 统一盖章当前格式版本：旧文件读入（version=0）再写出即升到当前版
+        if (value instanceof AnalysisReport r) {
+            r.setFormatVersion(AnalysisReport.CURRENT_FORMAT_VERSION);
+        } else if (value instanceof PartitionResult p) {
+            p.setFormatVersion(PartitionResult.CURRENT_FORMAT_VERSION);
+        }
         Files.createDirectories(file.toAbsolutePath().getParent());
         MAPPER.writeValue(file.toFile(), value);
     }

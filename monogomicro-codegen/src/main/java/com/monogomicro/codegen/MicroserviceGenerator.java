@@ -2,6 +2,7 @@ package com.monogomicro.codegen;
 
 import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.CompilationUnit;
+import com.monogomicro.core.M2mException;
 import com.monogomicro.core.model.AnalysisReport;
 import com.monogomicro.core.model.ClassInfo;
 import com.monogomicro.core.model.ClassStereotype;
@@ -197,7 +198,51 @@ public class MicroserviceGenerator {
     }
 
     public GenerationResult generate(Path out) throws Exception {
+        return generate(out, GenerateOptions.legacy());
+    }
+
+    /**
+     * 带选项生成（MCP / 程序化调用入口）：
+     * dryRun=true —— 完整生成在临时目录执行后清理，只返回统计与迁移清单，目标目录不受任何影响；
+     * dryRun=false 且 overwrite=false 时，目标目录已存在且非空报 E_OUTPUT_EXISTS 而非清空。
+     *
+     * 注意：本类持有一次性生成状态（ownerOf/result 等），同一实例只能成功执行一次 generate；
+     * dry-run 摸底后再正式生成，请用新实例调 dryRun=false。
+     */
+    public GenerationResult generate(Path out, GenerateOptions options) throws Exception {
         Path outDir = out.toAbsolutePath();
+        if (options.isDryRun()) {
+            Path tempDir = Files.createTempDirectory("m2m-dryrun-");
+            try {
+                GenerationResult dry = doGenerate(tempDir);
+                dry.setOutputDir(outDir); // 汇报目标位置，而不是临时目录
+                return dry;
+            } finally {
+                try {
+                    deleteRecursively(tempDir);
+                } catch (IOException e) {
+                    // 临时目录清理失败不影响结果，系统临时目录由 OS 兜底
+                }
+            }
+        }
+        if (!options.isOverwrite() && isNonEmptyDir(outDir)) {
+            throw new M2mException("E_OUTPUT_EXISTS",
+                    "目标目录已存在且非空：" + outDir,
+                    "确认内容可丢弃后置 overwrite=true（将清空重建），或更换输出目录");
+        }
+        return doGenerate(outDir);
+    }
+
+    private static boolean isNonEmptyDir(Path dir) throws IOException {
+        if (!Files.isDirectory(dir)) {
+            return false;
+        }
+        try (Stream<Path> entries = Files.list(dir)) {
+            return entries.findAny().isPresent();
+        }
+    }
+
+    private GenerationResult doGenerate(Path outDir) throws Exception {
         deleteRecursively(outDir);
         Files.createDirectories(outDir);
         result.setOutputDir(outDir);

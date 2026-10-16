@@ -6,15 +6,23 @@ import java.util.ArrayList;
 import java.util.List;
 
 /** 分区结果：partition.json 的结构。 */
-@JsonPropertyOrder({"alpha", "beta", "modularity", "kernelClasses", "communities", "metrics"})
+@JsonPropertyOrder({"formatVersion", "alpha", "beta", "modularity", "kernelClasses", "communities", "metrics"})
 public class PartitionResult {
 
+    /** v1 = 初版（无 formatVersion 字段的旧文件读取后即为 0）；结构未变，维持 1。 */
+    public static final int CURRENT_FORMAT_VERSION = 1;
+
+    /** 读取旧文件时保持 0（= v1 标记）；JsonIO.write 落盘前统一盖当前版本号。 */
+    private int formatVersion;
     private double alpha;
     private double beta;
     private double modularity;
     private List<String> kernelClasses = new ArrayList<>();
     private List<Community> communities = new ArrayList<>();
     private Metrics metrics = new Metrics();
+
+    public int getFormatVersion() { return formatVersion; }
+    public void setFormatVersion(int formatVersion) { this.formatVersion = formatVersion; }
 
     public double getAlpha() { return alpha; }
     public void setAlpha(double alpha) { this.alpha = alpha; }

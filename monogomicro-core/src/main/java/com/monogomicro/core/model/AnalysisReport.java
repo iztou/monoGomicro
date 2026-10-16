@@ -4,16 +4,27 @@ import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /** analyze 阶段产物：analysis.json 的结构。 */
-@JsonPropertyOrder({"project", "scannedAt", "packagePrefixes", "classCount", "edgeCount", "totalWeight", "classes", "edges"})
+@JsonPropertyOrder({"formatVersion", "project", "scannedAt", "packagePrefixes",
+        "mavenModules", "classCount", "edgeCount", "totalWeight", "classes", "edges"})
 public class AnalysisReport {
+
+    /** v1 = 初版（无 formatVersion 字段的旧文件读取后即为 0）；v2 = 新增 mavenModules。 */
+    public static final int CURRENT_FORMAT_VERSION = 2;
+
+    /** 读取旧文件时保持 0（= v1 标记）；JsonIO.write 落盘前统一盖当前版本号。 */
+    private int formatVersion;
     private String project;
     private String scannedAt;
     private List<String> packagePrefixes = new ArrayList<>();
     private List<ClassInfo> classes = new ArrayList<>();
     private List<DependencyEdge> edges = new ArrayList<>();
+    private List<String> mavenModules;
 
+    public int getFormatVersion() { return formatVersion; }
+    public void setFormatVersion(int formatVersion) { this.formatVersion = formatVersion; }
     public String getProject() { return project; }
     public void setProject(String project) { this.project = project; }
     public String getScannedAt() { return scannedAt; }
@@ -24,6 +35,20 @@ public class AnalysisReport {
     public void setClasses(List<ClassInfo> classes) { this.classes = classes; }
     public List<DependencyEdge> getEdges() { return edges; }
     public void setEdges(List<DependencyEdge> edges) { this.edges = edges; }
+
+    /** Maven 模块清单（v1 旧文件缺失时由 classes 惰性聚合，自愈兼容）。 */
+    public List<String> getMavenModules() {
+        if (mavenModules == null) {
+            mavenModules = classes.stream()
+                    .map(ClassInfo::getMavenModule)
+                    .filter(Objects::nonNull)
+                    .distinct()
+                    .sorted()
+                    .toList();
+        }
+        return mavenModules;
+    }
+    public void setMavenModules(List<String> mavenModules) { this.mavenModules = mavenModules; }
 
     public int getClassCount() { return classes.size(); }
     public int getEdgeCount() { return edges.size(); }

@@ -5,7 +5,7 @@ import com.monogomicro.codegen.MicroserviceGenerator;
 import com.monogomicro.core.model.AnalysisReport;
 import com.monogomicro.core.model.DependencyEdge;
 import com.monogomicro.core.model.PartitionResult;
-import com.monogomicro.core.partition.LouvainPartitioner;
+import com.monogomicro.core.partition.PartitionMetrics;
 import com.monogomicro.core.report.JsonIO;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -126,42 +126,22 @@ public class WorkspaceController {
                 "manualItems", result.getManualItems()));
     }
 
-    /** 指标实时重算：跨服务通信占比 + 模度 + 社区规模 */
+    /** 指标实时重算：跨服务通信占比 + 模度 + 社区规模（计算下沉在 core.PartitionMetrics） */
     private Map<String, Object> metrics() {
-        Map<String, Integer> effLabels = new HashMap<>();
-        Map<Integer, Integer> renumber = new HashMap<>();
-        state.labels().forEach((fqcn, c) -> {
-            if (c >= 0) {
-                effLabels.put(fqcn, c);
-            }
-        });
-        long total = 0;
-        long cross = 0;
-        for (DependencyEdge e : state.report().getEdges()) {
-            Integer ca = effLabels.get(e.getFrom());
-            Integer cb = effLabels.get(e.getTo());
-            if (ca == null || cb == null) {
-                continue; // 内核类参与的边不计入服务间通信
-            }
-            total += e.getWeight();
-            if (!ca.equals(cb)) {
-                cross += e.getWeight();
-            }
-        }
+        PartitionMetrics.Snapshot s = PartitionMetrics.of(state.graph(), state.partition());
         Map<String, Object> metrics = new LinkedHashMap<>();
-        metrics.put("crossRatio", total == 0 ? 0 : (double) cross / total);
-        metrics.put("modularity", LouvainPartitioner.modularity(
-                state.graph().symmetrized(), effLabels));
+        metrics.put("crossRatio", s.crossRatio());
+        metrics.put("modularity", s.modularity());
         List<Map<String, Object>> perCommunity = new ArrayList<>();
-        state.partition().getCommunities().forEach(c -> {
+        s.communities().forEach(c -> {
             Map<String, Object> cm = new LinkedHashMap<>();
-            cm.put("id", c.getId());
-            cm.put("name", c.getName());
-            cm.put("size", c.getClasses().size());
+            cm.put("id", c.id());
+            cm.put("name", c.name());
+            cm.put("size", c.size());
             perCommunity.add(cm);
         });
         metrics.put("perCommunity", perCommunity);
-        metrics.put("kernelSize", state.partition().getKernelClasses().size());
+        metrics.put("kernelSize", s.kernelSize());
         return metrics;
     }
 }
