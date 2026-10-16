@@ -110,7 +110,10 @@ slf4j → simple 绑定输出到 **stderr**。
 
 ## 6. 工具目录（核心设计）
 
-三层共 **15 个工具 + 2 个 resource**。命名统一 `snake_case`；所有入参出参为 JSON 对象。
+三层共 **16 个工具 + 2 个 resource**。命名统一 `snake_case`；所有入参出参为 JSON 对象。
+注册时附带 MCP 工具 annotations（观察层标 `readOnlyHint`，`generate_services` 标
+`destructiveHint`——客户端会自动给写盘操作加确认 UI）与 outputSchema（结构化输出，
+客户端可校验渲染，比纯文本 JSON 稳）。
 
 ### 6.1 流水线层（改变状态机）
 
@@ -123,7 +126,9 @@ slf4j → simple 绑定输出到 **stderr**。
 - 状态：`EMPTY → ANALYZED`
 
 #### `load_workspace` — 从已有 JSON 载入（复用 CLI/web 已产出）
-- 入参：`analysisPath`(string)、`partitionPath`(string?, 缺省则纯静态自动分区一版，与 web `/api/load` 语义一致)
+- 入参：`analysisPath`(string)、`partitionPath`(string?, 缺省则纯静态自动分区一版，与 web `/api/load` 语义一致)、
+  `projectDir`(string?, 目标单体项目根——`generate_services` 要读源码与 pom，analyze 会话可继承，
+  load 会话若要生成必须显式给)
 - 返回：分区摘要（同 `get_partition_summary`）
 - 状态：→ `ANALYZED` / `PARTITIONED`
 
@@ -140,10 +145,14 @@ slf4j → simple 绑定输出到 **stderr**。
 - 状态：`→ PARTITIONED`，清空 undo 栈
 
 #### `generate_services` — 生成微服务工程
-- 入参：`outDir`(string?, 默认 `<workspace>/m2m-out/services`)、`dryRun`(bool, **默认 true**)、`overwrite`(bool, 默认 false)
+- 入参：`projectDir`(string?, 单体项目根；analyze 会话可省略继承，load 会话必填)、
+  `outDir`(string?, 默认 `<workspace>/services`)、`dryRun`(bool, **默认 true**)、`overwrite`(bool, 默认 false)
 - 返回：`{dryRun, services: 12, rpcBridges: 16, injectionsRewritten: 13, mappersMigrated: 21, manualItems: [前10条], manualItemsTotal: 4, outDir}`
 - 错误：`E_NO_PARTITION` / `E_OUTPUT_EXISTS` / `E_OUT_OF_WORKSPACE`
-- 安全：dryRun 默认开——先让 agent/人看摘要再真写盘；真写盘要求 `overwrite=true` 且目标非空时明确报错
+- 安全：dryRun 默认开——只计算统计与迁移项不落盘（依赖 §10 新增的 codegen dry-run 支持）；
+  真写盘时若目标已存在且非空，必须显式 `overwrite=true`，否则报 `E_OUTPUT_EXISTS`
+  （**注意：现版 `MicroserviceGenerator.generate()` 首行即 `deleteRecursively(outDir)` 无条件清空，
+  overwrite 检查是新增行为**，见 §10-4）
 
 ### 6.2 观察层（只读，渐进式披露）
 
@@ -167,7 +176,8 @@ slf4j → simple 绑定输出到 **stderr**。
 - 返回：全局指标 + 每服务规模/通信量 + top 用例跨度（比 summary 更细的数值视图）
 
 #### `get_migration_items`
-- 返回：`{total, items: [{type, target, reason, doc}]}`（MIGRATION.md 的结构化形式，来自 `GenerationResult.getManualItems()`；未生成过则 `E_NO_GENERATION`，提示先 `generate_services`）
+- 返回：`{total, items: [{type, target, reason, doc}]}`（MIGRATION.md 的结构化形式，来自 `GenerationResult.getManualItems()`；
+  未生成过——或分区在生成后被编辑过、缓存已失效——则 `E_NO_GENERATION`，hint 提示先（重新）`generate_services`）
 
 ### 6.3 编辑层（变更 + undo）
 
@@ -176,6 +186,13 @@ slf4j → simple 绑定输出到 **stderr**。
 - 行为：push undo 快照 → 执行移动（语义同 `ConsoleState.move`）→ 重算指标
 - 返回：`{moved, metricsDelta: {crossRatio: {before, after}, modularity: {before, after}}, affectedEdgesTop5}` —— delta 让 LLM 立刻看到后果，决定去留
 - 错误：`E_UNKNOWN_CLASS` / `E_UNKNOWN_SERVICE`
+
+#### `rename_service` — 给服务起语义名
+- 入参：`serviceId`(int)、`name`(string)
+- 行为：改 `Community.name`（影响 `get_partition_summary` 展示与 `generate_services` 的 `svc-<tag>` 目录名）；push undo 快照
+- 返回：`{serviceId, name}`
+- 错误：`E_NO_PARTITION` / `E_UNKNOWN_SERVICE`
+- 动机：对话式工作流里 LLM 看类列表后给服务起语义名再生成，是「LLM 在环」最直观的一环
 
 #### `undo`
 - 返回：`{restored: {fqcn, fromService}}`；栈空返回 `E_NOTHING_TO_UNDO`（栈深上限 50）
@@ -201,9 +218,14 @@ EMPTY ──analyze_project──▶ ANALYZED ──compute_partition──▶ P
 ```
 
 - 单 workspace 会话；所有工具先查状态机，非法调用返回结构化 `E_*`（含"下一步该调什么"的 hint）。
-- 并发：读工具并行（`ReadWriteLock` 读锁），写工具（analyze/compute/move/generate/save）串行（写锁）。
+- 重复 `analyze_project` / `load_workspace`：任何状态下都允许，语义 = 重开会话
+  （清空已导入 trace、undo 栈、生成缓存，回到 `ANALYZED` / `PARTITIONED`）。
+- 分区编辑（`move_class` / `rename_service` / `undo` / `compute_partition`）使缓存的
+  `GenerationResult` 失效——此后 `get_migration_items` 返回 `E_NO_GENERATION`。
+- `save_partition` 仅 `PARTITIONED` 可用，否则 `E_NO_PARTITION`。
+- 并发：读工具并行（`ReadWriteLock` 读锁），写工具（analyze/compute/move/rename/generate/save）串行（写锁）。
   MCP 客户端目前实际串行为主，锁是防御性的。
-- undo 栈：`move_class` 前压栈 `{fqcn, fromService}`；`compute_partition` / `load_workspace` 清栈。
+- undo 栈：`move_class` / `rename_service` 前压栈；`compute_partition` / `load_workspace` / 重复 `analyze_project` 清栈。
 
 ## 8. 输出与 token 预算（渐进式披露规则）
 
@@ -246,7 +268,12 @@ EMPTY ──analyze_project──▶ ANALYZED ──compute_partition──▶ P
 2. **JSON 契约加版本**：`AnalysisReport` / `PartitionResult` 增加 `formatVersion` 字段
    （写入时填当前值；读取时缺失视为 v1 并兼容），工具端好做前向判断。
 3. **`AnalysisReport` 补 `mavenModules` 汇总**（analyze 返回值要用，现需从 classes 里聚合，放模型上更稳）。
-4. codegen 无需改动（`GenerationResult` 的 summary/manualItems 已可结构化）。
+4. **codegen 增 dry-run 与 overwrite 语义**：现版 `MicroserviceGenerator.generate()` 首行
+   `deleteRecursively(outDir)` 无条件清空写盘，与 MCP 的 `dryRun`/`overwrite` 契约直接冲突。
+   新增 `generate(Path out, GenerateOptions{dryRun, overwrite})`：dryRun 时只计算
+   summary/manualItems 不落盘；`overwrite=false` 且目标非空时报错而非删除。旧签名保留委托，web 不受影响。
+5. **扫描资源上限放 core**：`ProjectScanner` 现无上限，新增源文件数/边数上限参数，超限抛结构化异常。
+   放 core 而非 mcp 层，web 入口同样受益（§12 第 4 条的实现位置）。
 
 ## 11. 长任务与进度
 
@@ -258,7 +285,9 @@ EMPTY ──analyze_project──▶ ANALYZED ──compute_partition──▶ P
 ## 12. 安全边界
 
 1. **写路径白名单**：`generate_services.outDir` 与 `save_partition.path` 必须位于
-   workspace 根（会话创建时确定，默认 `<projectDir>/../m2m-out` 或显式指定）内，规范化后校验，拒绝 `..` 逃逸。
+   workspace 根内，规范化后校验，拒绝 `..` 逃逸。**workspace 根在会话创建时定死**：
+   analyze 会话默认 `<projectDir>/m2m-out`（与 CLI 的 `m2m-out/` 约定一致），
+   load 会话默认 `analysisPath` 所在目录，均可显式指定；全文档所称 `<workspace>` 即此根。
 2. **dry-run 默认**：`generate_services` 默认 `dryRun=true`，只返回统计与迁移项；真写盘需显式
    `dryRun=false` + 目标目录已存在且非空时 `overwrite=true`。
 3. **进程外命令固定**：仅 `MavenClasspathResolver` 固定调 `mvn dependency:build-classpath`，
@@ -281,10 +310,10 @@ EMPTY ──analyze_project──▶ ANALYZED ──compute_partition──▶ P
 
 | 里程碑 | 内容 | 预估 |
 |---|---|---|
-| M0 | core 增量：PartitionMetrics 下沉、formatVersion、mavenModules | 0.5 天 |
+| M0 | core 增量：PartitionMetrics 下沉、formatVersion、mavenModules、扫描上限；codegen 增量：GenerateOptions（dryRun/overwrite） | 1 天 |
 | M1（MVP） | mcp 模块骨架 + stdio + 8 工具：analyze_project / load_workspace / compute_partition / get_partition_summary / list_classes / get_class_info / find_classes / move_class（含 undo） | 2~3 天 |
-| M2 | generate_services（dry-run/overwrite/路径校验）、save_partition、get_metrics、get_migration_items、ingest_trace、resources、进度通知 | 1~2 天 |
-| M3 | 打磨：README + Inspector 截图、错误 hint 完善、（可选）HTTP 传输 | 1 天 |
+| M2 | generate_services（dry-run/overwrite/路径校验）、save_partition、rename_service、get_metrics、get_migration_items、ingest_trace、resources、进度通知 | 1~2 天 |
+| M3 | 打磨：README（含 Claude Desktop `claude_desktop_config.json` 配置片段示例）+ Inspector 截图、错误 hint 完善、（可选）HTTP 传输 | 1 天 |
 
 MVP 验收标准：在 Claude Desktop 里对一个真实单体完成「分析 → 摘要 → 追问某类归属依据 →
 移动它并看到指标变化 → undo」全对话闭环。
@@ -309,6 +338,11 @@ MVP 验收标准：在 Claude Desktop 里对一个真实单体完成「分析 �
 4. **undo 粒度**：仅 move 级（现方案，简单）vs 快照级（整个 partition 深拷贝，内存换简单）？
 5. **generate 的 dry-run 默认值**：true（现方案，安全优先）vs false（演示更爽快）？
 6. **JSON 契约版本字段**：现在加（现方案）vs 等破坏性变更时再加？
+
+**评审结论（2026-10-16 代码核对后定稿）**：① 维持分开——summary 是每轮对话锚点必须小，metrics 单列细档；
+② MVP 单 workspace，HTTP 常驻时再 `session_id` 化；③ 维持官方 Java SDK；④ move 级 undo 足够，
+快照级是过度设计；⑤ dryRun 默认 true，但依赖 §10-4 的 codegen 改动先落地（现版 generate 无条件删目录）；
+⑥ formatVersion 现在加，一行字段换前向兼容。
 
 ---
 
