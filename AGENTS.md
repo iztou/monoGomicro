@@ -35,5 +35,6 @@ Java 单体 → 微服务拆分建议工具，IBM Mono2Micro 复刻。2026-09-23
 - 注释和文档用中文；ponytail 模式（本项目是用户作品集项目，要求生产级质量而非 demo）
 - 机器注意：用户是 Java 后端求职中，此项目用于面试展示；技术讨论按面试深度准备
 - 设计类工作流：用户常拿文档给 Kimi 交叉评审后再由我复核验证（事实断言逐一到代码核实）
-- 下一步候选：生成服务的集成测试、README 真 GIF（需装 asciinema）、（可选）MCP HTTP 传输、公开托管
+- 生成服务运行级 IT 已落地（codegen failsafe：生成→install→双服务启动→RPC 桥 HTTP 断言，曾修复 4 个仅运行时暴露的生成器缺陷：构造器参数改写/-parameters/单参 415/桥 JSON 序列化+repackage）；已知边界：原单体纯 parent 继承式依赖管理时生成工程缺 BOM
+- 下一步候选：README 真 GIF（需装 asciinema）、（可选）MCP HTTP 传输、公开托管
 
