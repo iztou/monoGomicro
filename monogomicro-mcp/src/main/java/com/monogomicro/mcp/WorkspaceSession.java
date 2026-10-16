@@ -349,8 +349,12 @@ final class WorkspaceSession {
             }
             GenerationResult result;
             try {
-                // 每次调用新实例：MicroserviceGenerator 持有一次性生成状态，dry-run 后正式生成不能复用
-                result = new MicroserviceGenerator(report, partition, effectiveProject)
+                // 每次调用新实例 + 深拷贝分区：MicroserviceGenerator 持有一次性生成状态，且会直接变异
+                // 传入的 partition（提升类写回 kernel/communities）。若共享会话对象，dry-run 先跑一遍
+                // 就把提升决策写回分区，紧接的正式生成拿到"已提升"的分区——桥全部消失、内核膨胀。
+                PartitionResult generationInput = JsonIO.mapper().treeToValue(
+                        JsonIO.mapper().valueToTree(partition), PartitionResult.class);
+                result = new MicroserviceGenerator(report, generationInput, effectiveProject)
                         .generate(normalized, new GenerateOptions(dryRun, overwrite));
             } catch (M2mException e) {
                 throw e; // E_OUTPUT_EXISTS 等结构化错误透传

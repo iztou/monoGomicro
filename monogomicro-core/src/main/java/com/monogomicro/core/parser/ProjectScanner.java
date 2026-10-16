@@ -421,6 +421,9 @@ public class ProjectScanner {
             walk.filter(p -> p.toString().endsWith("src/main/java"))
                     .filter(Files::isDirectory)
                     .filter(p -> !p.toString().contains("/target/"))
+                    // m2m-out 是本工具的生成输出目录（CLI/MCP 默认落在项目根）：生成过一次后再分析，
+                    // 生成物会被当源码扫进来自我污染（多出各服务的 Application 类、模块名混入 svc-*）
+                    .filter(p -> !p.toString().contains("/m2m-out/"))
                     .forEach(roots::add);
         }
         List<Path> deduped = new ArrayList<>();

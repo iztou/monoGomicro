@@ -2,6 +2,7 @@ package com.monogomicro.mcp;
 
 import com.monogomicro.core.model.AnalysisReport;
 import com.monogomicro.core.model.ClassInfo;
+import com.monogomicro.core.model.ClassStereotype;
 import com.monogomicro.core.model.DependencyEdge;
 import com.monogomicro.core.model.PartitionResult;
 import com.monogomicro.core.report.JsonIO;
@@ -114,7 +115,8 @@ class McpServerIT {
 
         Map<String, Object> loaded = toolCall("load_workspace",
                 Map.of("analysisPath", fixtureDir.resolve("analysis.json").toString(),
-                        "projectDir", fixtureDir.resolve("mono").toString()));
+                        "projectDir", fixtureDir.resolve("mono").toString(),
+                        "partitionPath", fixtureDir.resolve("seed-partition.json").toString()));
         assertEquals("PARTITIONED", textPayload(loaded).get("state"));
 
         Map<String, Object> renamed = toolCall("rename_service",
@@ -127,8 +129,12 @@ class McpServerIT {
 
         Map<String, Object> generated = toolCall("generate_services",
                 Map.of("outDir", fixtureDir.resolve("services").toString(), "dryRun", true));
-        assertEquals(true, textPayload(generated).get("dryRun"));
+        Map<String, Object> dry = textPayload(generated);
+        assertEquals(true, dry.get("dryRun"));
         assertFalse(Files.exists(fixtureDir.resolve("services")), "dry-run 不得写盘");
+        int dryBridges = ((Number) dry.get("rpcBridges")).intValue();
+        assertTrue(dryBridges >= 1,
+                "fixture 含跨服务引用 a.A → b.C，dry-run 必须报告 RPC 桥（实际 " + dryBridges + "）");
 
         Map<String, Object> migration = toolCall("get_migration_items", Map.of());
         assertTrue(textPayload(migration).containsKey("total"));
@@ -139,8 +145,19 @@ class McpServerIT {
         Map<String, Object> real = toolCall("generate_services",
                 Map.of("outDir", fixtureDir.resolve("services").toString(),
                         "dryRun", false, "overwrite", true));
-        assertEquals(false, textPayload(real).get("dryRun"));
+        Map<String, Object> realPayload = textPayload(real);
+        assertEquals(false, realPayload.get("dryRun"));
         assertTrue(Files.exists(fixtureDir.resolve("services/pom.xml")), "聚合 pom 已生成");
+        // dry-run 不得变异会话分区：正式生成的统计必须与 dry-run 完全一致
+        // （回归：曾因生成器写回共享 partition，第二次生成桥全部消失、类被吞进内核）
+        assertEquals(dryBridges, ((Number) realPayload.get("rpcBridges")).intValue(),
+                "dry-run 与正式生成的 rpcBridges 必须一致（分区被 dry-run 污染）");
+        assertEquals(((Number) dry.get("classesTotal")).intValue(),
+                ((Number) realPayload.get("classesTotal")).intValue(),
+                "dry-run 与正式生成的 classesTotal 必须一致（分区被 dry-run 污染）");
+        assertEquals(((Number) dry.get("manualItemsTotal")).intValue(),
+                ((Number) realPayload.get("manualItemsTotal")).intValue(),
+                "dry-run 与正式生成的 manualItemsTotal 必须一致（分区被 dry-run 污染）");
 
         Map<String, Object> bad = toolCall("move_class",
                 Map.of("fqcn", "no.Such", "targetService", 0));
@@ -229,11 +246,14 @@ class McpServerIT {
         for (String fqcn : new String[]{"a.A", "a.B", "b.C", "k.K"}) {
             classes.add(new ClassInfo(fqcn, "mono", fqcn.replace('.', '/') + ".java"));
         }
+        // b.C 是跨服务被注入的服务接口（stereotype=SERVICE + FIELD 注入边是建 RPC 桥的判定条件）
+        classes.get(2).setStereotype(ClassStereotype.SERVICE);
         report.setClasses(classes);
         DependencyEdge e1 = new DependencyEdge("a.A", "a.B");
         e1.setWeight(10);
         DependencyEdge e2 = new DependencyEdge("a.A", "b.C");
         e2.setWeight(5);
+        e2.setKinds(List.of("FIELD"));
         report.setEdges(List.of(e1, e2));
         JsonIO.write(report, fixtureDir.resolve("analysis.json"));
 
@@ -257,9 +277,11 @@ class McpServerIT {
                     <groupId>com.demo</groupId><artifactId>demo</artifactId><version>1.0</version>
                 </project>
                 """);
-        Files.writeString(mono.resolve("a/A.java"), "package a;\npublic class A { B b; }");
+        // a.A 跨服务注入 b.C（beta 服务）：b.C 按 ISysXxxService 模式做成带方法的接口
+        // （SERVICE 构造型 + FIELD 边 + 可解析的方法签名 = RPC 桥的完整判定条件）
+        Files.writeString(mono.resolve("a/A.java"), "package a;\npublic class A { B b; b.C c; }");
         Files.writeString(mono.resolve("a/B.java"), "package a;\npublic class B {}");
-        Files.writeString(mono.resolve("b/C.java"), "package b;\npublic class C {}");
+        Files.writeString(mono.resolve("b/C.java"), "package b;\npublic interface C { String hello(String name); }");
         Files.writeString(mono.resolve("k/K.java"), "package k;\npublic class K {}");
     }
 }
