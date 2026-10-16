@@ -39,7 +39,7 @@ java -jar monogomicro-cli/target/m2m.jar analyze /path/to/monolith -p com.your.p
 java -jar monogomicro-cli/target/m2m.jar partition -a m2m-out/analysis.json -o m2m-out
 
 # 3.（可选）运行时采集：启动你的应用
-java -javaagent:monogomicro-agent/target/monogomicro-agent-1.0.0.jar=\
+java -javaagent:monogomicro-agent/target/monogomicro-agent-0.1.0.jar=\
 out=/tmp/trace.log,include=com.your.pkg.,entry=DispatcherServlet -jar app.jar
 #    然后带轨迹重新分区：
 java -jar monogomicro-cli/target/m2m.jar partition -a m2m-out/analysis.json -t /tmp/trace.log -o m2m-out
@@ -132,3 +132,7 @@ npx @modelcontextprotocol/inspector java -jar monogomicro-mcp/target/m2m-mcp.jar
 ## 测试
 
 `mvn test`：Louvain 双簇恢复、单社区、空图；轨迹解析（单线程用例切分、多线程交织）。
+
+## 许可证
+
+[Apache-2.0](LICENSE)

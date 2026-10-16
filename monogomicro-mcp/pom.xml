@@ -4,9 +4,9 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>com.monogomicro</groupId>
+        <groupId>io.github.iztou</groupId>
         <artifactId>monogomicro-parent</artifactId>
-        <version>1.0.0</version>
+        <version>0.1.0</version>
     </parent>
 
     <artifactId>monogomicro-mcp</artifactId>
@@ -15,11 +15,11 @@
 
     <dependencies>
         <dependency>
-            <groupId>com.monogomicro</groupId>
+            <groupId>io.github.iztou</groupId>
             <artifactId>monogomicro-core</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.monogomicro</groupId>
+            <groupId>io.github.iztou</groupId>
             <artifactId>monogomicro-codegen</artifactId>
         </dependency>
         <!-- 官方 MCP Java SDK：排除默认 jackson3 绑定（其 annotations 仍用 com.fasterxml 包名，
@@ -80,6 +80,9 @@
                         <phase>package</phase>
                         <goals><goal>shade</goal></goals>
                         <configuration>
+                            <!-- 发布件即 fat jar（brew/jbang 直接拉去运行）；shade 会同步生成
+                                 dependency-reduced-pom，被并入 jar 的 core/codegen 从部署 pom 移除 -->
+                            <createDependencyReducedPom>true</createDependencyReducedPom>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>com.monogomicro.mcp.McpServerMain</mainClass>
