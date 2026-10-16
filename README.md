@@ -5,6 +5,8 @@ Java 单体应用 → 微服务拆分建议工具（IBM Mono2Micro 的开源复�
 输入一个 Java/Maven 单体项目，输出：微服务分区建议（可交互编辑）、共享内核识别、
 可直接编译的微服务工程骨架（跨服务调用自动改写为 REST）、人工迁移清单。
 
+![CLI 三步演示：analyze → partition → generate（RuoYi 4.8.3 实录）](docs/demo.gif)
+
 ## 与 IBM Mono2Micro 的对标
 
 | Mono2Micro 能力 | 本项目实现 | 模块 |

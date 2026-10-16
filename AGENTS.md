@@ -36,5 +36,6 @@ Java 单体 → 微服务拆分建议工具，IBM Mono2Micro 复刻。2026-09-23
 - 机器注意：用户是 Java 后端求职中，此项目用于面试展示；技术讨论按面试深度准备
 - 设计类工作流：用户常拿文档给 Kimi 交叉评审后再由我复核验证（事实断言逐一到代码核实）
 - 生成服务运行级 IT 已落地（codegen failsafe：生成→install→双服务启动→RPC 桥 HTTP 断言，曾修复 4 个仅运行时暴露的生成器缺陷：构造器参数改写/-parameters/单参 415/桥 JSON 序列化+repackage）；已知边界：原单体纯 parent 继承式依赖管理时生成工程缺 BOM
-- 下一步候选：README 真 GIF（需装 asciinema）、（可选）MCP HTTP 传输、公开托管
+- README 演示 GIF 已落地（docs/demo.gif，1062×608、85 帧、~537KB）：vhs 在 macOS 直接 abort trap 不可用；工具链为 asciinema rec + agg（--theme monokai --font-size 14 --speed 1.6）。重录要点：驱动脚本 /tmp/m2m-demo-script.sh（逐字符打字效果）；headless 录制时 stty 改尺寸无效，须事后 sed cast 头 `"term":{"cols":80,"rows":24}` → 124×30（agg 按 cast 头栅格排版，宽了才不折行）；长命令用 `$M` 变量 + `../RuoYi` 相对路径压到 124 列内
+- 下一步候选：（可选）MCP HTTP 传输、公开托管（已推 NAS 私有仓库 remote `nas`，不推 Gitee）
 
