@@ -38,5 +38,5 @@ Java 单体 → 微服务拆分建议工具，IBM Mono2Micro 复刻。2026-09-23
 - 生成服务运行级 IT 已落地（codegen failsafe：生成→install→双服务启动→RPC 桥 HTTP 断言，曾修复 4 个仅运行时暴露的生成器缺陷：构造器参数改写/-parameters/单参 415/桥 JSON 序列化+repackage）；已知边界：原单体纯 parent 继承式依赖管理时生成工程缺 BOM
 - README 演示 GIF 已落地（docs/demo.gif，1062×608、85 帧、~537KB）：vhs 在 macOS 直接 abort trap 不可用；工具链为 asciinema rec + agg（--theme monokai --font-size 14 --speed 1.6）。重录要点：驱动脚本 /tmp/m2m-demo-script.sh（逐字符打字效果）；headless 录制时 stty 改尺寸无效，须事后 sed cast 头 `"term":{"cols":80,"rows":24}` → 124×30（agg 按 cast 头栅格排版，宽了才不折行）；长命令用 `$M` 变量 + `../RuoYi` 相对路径压到 124 列内
 - **Maven 坐标已切发布形态（2026-10-16）**：groupId `io.github.iztou` / version `0.1.0`（Central namespace，与 Java 包名 `com.monogomicro` 有意解耦，包名不动）；根 pom 带 url/licenses/developers/scm + `release` profile（source/javadoc/gpg/central-publishing，默认关闭）。发布：`mvn -Prelease deploy -pl .,monogomicro-core,monogomicro-codegen,monogomicro-mcp`（mcp 发布件是 fat jar，reduced-pom 已去掉被 shade 的兄弟依赖）
-- 下一步候选：分发落地用户侧三步（Central 账号 + GPG 密钥 + GitHub 公开仓库 iztou/monoGomicro），之后 brew tap 与 jbang 脚本；（可选）MCP HTTP 传输
+- 下一步候选：分发落地用户侧两步（Central 账号+token、GPG 密钥），之后 brew tap 与 jbang 脚本；（可选）MCP HTTP 传输。remote 现状：`github`（公开仓库 iztou/monoGomicro）+ `nas`（私有备份），推送时两个都推
 
