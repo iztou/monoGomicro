@@ -1,91 +1,97 @@
+English | [简体中文](README.zh-CN.md)
+
 # monoGomicro
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.iztou/monogomicro-parent.svg?label=Maven%20Central)](https://central.sonatype.com/artifact/io.github.iztou/monogomicro-mcp)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 ![Java](https://img.shields.io/badge/Java-17%2B-blue)
 
-Java 单体应用 → 微服务拆分建议工具（IBM Mono2Micro 的开源复刻）。
+An open-source reimplementation of IBM Mono2Micro: turns a Java monolith into
+actionable microservice partitioning advice — interactively editable, with a
+compilable service skeleton generated at the end.
 
-输入一个 Java/Maven 单体项目，输出：微服务分区建议（可交互编辑）、共享内核识别、
-可直接编译的微服务工程骨架（跨服务调用自动改写为 REST）、人工迁移清单。
+Feed it a Java/Maven monolith; get back: microservice partition proposals
+(interactively editable), shared-kernel detection, a compilable multi-module
+Maven skeleton with cross-service calls rewritten to REST, and a migration
+checklist for everything that needs a human.
 
-![CLI 三步演示：analyze → partition → generate（RuoYi 4.8.3 实录）](docs/demo.gif)
+![CLI demo: analyze → partition → generate (recorded on RuoYi 4.8.3)](docs/demo.gif)
 
-## 与 IBM Mono2Micro 的对标
+## Feature parity with IBM Mono2Micro
 
-| Mono2Micro 能力 | 本项目实现 | 模块 |
+| Mono2Micro capability | This project | Module |
 |---|---|---|
-| 静态分析 | JavaParser 符号解析（源码 + JDK + Maven 依赖 jar），import/泛型参数/字段注解/枚举/@interface/类字面量/varargs 全覆盖 | core |
-| 运行时分析 | ByteBuddy java agent 插桩，按 HTTP 入口切分业务用例，重建调用链 | agent |
-| AI 分区建议 | 双图融合 + Louvain 社区发现 + 模拟退火多目标优化（通信成本/用例跨度/规模均衡） | core |
-| 图形视图与分区编辑 | 本地 Web 控制台：D3 力导向图 + 拖拽调整 + 指标实时重算 | web |
-| 代码重构 | 分区 → Maven 多模块微服务工程：跨服务注入改写为 REST 客户端/Controller 桥、共享 DTO 自动提取、内核依赖闭包、MIGRATION.md | codegen |
+| Static analysis | JavaParser symbol resolution (source + JDK + Maven dependency jars); imports, generic type args, field annotations, enums, @interfaces, class literals and varargs all covered | core |
+| Runtime analysis | ByteBuddy java agent instrumentation; business use cases split by HTTP entry point, call chains rebuilt | agent |
+| AI partitioning | Dual-graph fusion + Louvain community detection + simulated-annealing multi-objective refinement (communication cost / use-case span / size balance) | core |
+| Graph view & editing | Local web console: D3 force-directed graph, drag-to-adjust, live metric recompute | web |
+| Code refactoring | Partition → Maven multi-module services: cross-service injections rewritten to REST clients/controllers, shared DTO extraction, kernel dependency closure, MIGRATION.md | codegen |
 
-## 架构
+## Architecture
 
 ```
-monogomicro-core      解析器 / 依赖图 / 分区算法 / 指标 —— 无框架纯库
-monogomicro-agent     运行时插桩 agent（ByteBuddy，premain）
-monogomicro-codegen   分区 → 微服务工程生成（源码改写）
-monogomicro-cli       m2m 命令行（analyze / partition / trace / generate）
-monogomicro-web       本地控制台（Spring Boot 薄 REST + D3 单页）
+monogomicro-core      parser / dependency graph / partitioning / metrics — zero-framework library
+monogomicro-agent     runtime instrumentation agent (ByteBuddy, premain)
+monogomicro-codegen   partition → microservice project generation (source rewriting)
+monogomicro-cli       the m2m CLI (analyze / partition / trace / generate)
+monogomicro-web       local console (thin Spring Boot REST + D3 single page)
 ```
 
-## 安装
+## Install
 
-构件发布在 [Maven Central](https://central.sonatype.com/artifact/io.github.iztou/monogomicro-mcp)（`io.github.iztou`，0.1.0+）：
+Artifacts are on [Maven Central](https://central.sonatype.com/artifact/io.github.iztou/monogomicro-mcp) (`io.github.iztou`, 0.1.0+):
 
 ```bash
-# Homebrew（macOS / Linuxbrew）
-brew install iztou/tap/m2m        # CLI：m2m analyze / partition / trace / generate
-brew install iztou/tap/m2m-mcp    # MCP server（stdio）
+# Homebrew (macOS / Linuxbrew)
+brew install iztou/tap/m2m        # CLI: m2m analyze / partition / trace / generate
+brew install iztou/tap/m2m-mcp    # MCP server (stdio)
 
-# jbang 直跑（免克隆免 package，JDK 也由 jbang 自动供应）
-jbang io.github.iztou:monogomicro-cli:0.1.0 analyze /path/to/monolith -p com.your.pkg -o m2m-out
+# jbang — no clone, no package step; jbang even provisions the JDK
+jbang io.github.iztou:monogomicro-cli:0.2.0 analyze /path/to/monolith -p com.your.pkg -o m2m-out
 ```
 
 ```xml
-<!-- 或作为 Maven 依赖（core 无框架纯库，可直接嵌入） -->
+<!-- or as a Maven dependency (core is a zero-framework library, embed it directly) -->
 <dependency>
     <groupId>io.github.iztou</groupId>
     <artifactId>monogomicro-core</artifactId>
-    <version>0.1.0</version>
+    <version>0.2.0</version>
 </dependency>
 ```
 
-从源码构建见下方快速开始。
+Building from source: see Quick Start below.
 
-## 快速开始
+## Quick Start
 
 ```bash
 mvn -DskipTests package
 
-# 1. 静态分析（自动解析 Maven classpath）
+# 1. Static analysis (Maven classpath resolved automatically)
 java -jar monogomicro-cli/target/m2m.jar analyze /path/to/monolith -p com.your.pkg -o m2m-out
 
-# 2. 分区建议（可选融合运行时轨迹）
+# 2. Partitioning (optionally fused with runtime traces)
 java -jar monogomicro-cli/target/m2m.jar partition -a m2m-out/analysis.json -o m2m-out
 
-# 3.（可选）运行时采集：启动你的应用
-java -javaagent:monogomicro-agent/target/monogomicro-agent-0.1.0.jar=\
+# 3. (optional) Runtime capture: start your app with the agent
+java -javaagent:monogomicro-agent/target/monogomicro-agent-0.2.0.jar=\
 out=/tmp/trace.log,include=com.your.pkg.,entry=DispatcherServlet -jar app.jar
-#    然后带轨迹重新分区：
+#    then re-partition with the trace:
 java -jar monogomicro-cli/target/m2m.jar partition -a m2m-out/analysis.json -t /tmp/trace.log -o m2m-out
 
-# 4. 生成微服务工程（输出目录可 mvn compile）
+# 4. Generate the microservice projects (output dir passes mvn compile)
 java -jar monogomicro-cli/target/m2m.jar generate \
   -a m2m-out/analysis.json -p m2m-out/partition.json \
   --project /path/to/monolith -o m2m-out/services
 
-# 5.（可选）可视化控制台：http://localhost:8080
+# 5. (optional) Visual console: http://localhost:8080
 java -jar monogomicro-web/target/monogomicro-web.jar
 ```
 
-## MCP 模式（LLM 在环）
+## MCP mode (LLM in the loop)
 
-`monogomicro-mcp` 把流水线暴露为 [MCP](https://modelcontextprotocol.io) server，
-默认 stdio 传输，Claude Desktop / 任意 MCP 客户端可对话式完成「分析 → 摘要 → 追问归属依据 →
-移动类看指标变化 → 撤销」：
+`monogomicro-mcp` exposes the pipeline as an [MCP](https://modelcontextprotocol.io) server.
+Default transport is stdio: Claude Desktop or any MCP client can do "analyze → summarize →
+ask why a class landed here → move a class and watch the metrics → undo" conversationally:
 
 ```json
 // Claude Desktop -> Settings -> Developer -> Edit Config (claude_desktop_config.json)
@@ -93,82 +99,91 @@ java -jar monogomicro-web/target/monogomicro-web.jar
   "mcpServers": {
     "monogomicro": {
       "command": "java",
-      "args": ["-jar", "/绝对路径/monogomicro-mcp/target/m2m-mcp.jar"]
+      "args": ["-jar", "/absolute/path/to/monogomicro-mcp/target/m2m-mcp.jar"]
     }
   }
 }
 ```
 
-团队内网共享可用 HTTP 传输（Streamable HTTP，多客户端共享同一工作区状态）：
+For team/LAN sharing there is an HTTP transport (Streamable HTTP; all clients share one workspace state):
 
 ```bash
-java -jar monogomicro-mcp/target/m2m-mcp.jar --http --port 8082   # 默认 127.0.0.1，POST /mcp
-# 客户端配置 type: "http" + url: http://127.0.0.1:8082/mcp
+java -jar monogomicro-mcp/target/m2m-mcp.jar --http --port 8082   # binds 127.0.0.1 by default; POST /mcp
+# client config: type "http" + url http://127.0.0.1:8082/mcp
 ```
 
-工具一览（15 个）：`analyze_project` / `load_workspace` / `ingest_trace` / `compute_partition` /
-`generate_services`（默认 dry-run）/ `save_partition`（流水线）；`get_partition_summary` /
-`list_classes` / `get_class_info` / `find_classes` / `get_metrics` / `get_migration_items`
-（观察，渐进式披露，单工具返回 ≤4KB）；`move_class`（返回指标 delta）/ `rename_service` /
-`undo`（编辑）。另有资源 `m2m://analysis`、`m2m://partition` 供客户端按需拉取大对象。
-错误统一结构化（`{code, message, hint}`，拼错类名/服务 id 附相近候选）；写路径限制在 workspace 根内；
-`analyze_project` 支持进度通知（客户端传 `_meta.progressToken` 即每 50 个源文件收到进度）。
-设计文档见 `docs/mcp-design.md`；契约测试（真子进程 stdio + HTTP 两条传输的 JSON-RPC 全链路）随 `mvn verify` 运行。
+Note: the Host-header allowlist (DNS-rebinding protection) only accepts the bind address and
+loopback variants. For LAN sharing, bind your LAN IP explicitly (e.g. `--host 192.168.1.10`);
+binding `0.0.0.0` will get LAN clients 403-rejected on Host mismatch.
 
-调试与体验：用官方 Inspector 图形化调用全部工具——
+15 tools: `analyze_project` / `load_workspace` / `ingest_trace` / `compute_partition` /
+`generate_services` (dry-run by default) / `save_partition` (pipeline);
+`get_partition_summary` / `list_classes` / `get_class_info` / `find_classes` / `get_metrics` /
+`get_migration_items` (observation, progressive disclosure, ≤4KB per tool result);
+`move_class` (returns metric delta) / `rename_service` / `undo` (editing).
+Two resources — `m2m://analysis` and `m2m://partition` — let clients pull the big objects on demand.
+Errors are structured (`{code, message, hint}`, with near-miss suggestions for unknown class/service ids);
+writes are confined to the workspace root; `analyze_project` streams progress notifications
+(pass `_meta.progressToken` and get an update every 50 source files).
+Design doc: `docs/mcp-design.md` (Chinese). Contract tests — real subprocess stdio + HTTP,
+full JSON-RPC round trips on both transports — run as part of `mvn verify`.
+
+Try it visually with the official Inspector:
 
 ```bash
 npx @modelcontextprotocol/inspector java -jar monogomicro-mcp/target/m2m-mcp.jar
-# 打开提示的 URL：左侧 Tools 列表逐个试；Resources 页看 m2m://analysis
+# open the printed URL: walk the Tools list; check Resources for m2m://analysis
 ```
 
-一段真实对话（RuoYi，Claude Desktop）：
+A real conversation (RuoYi, Claude Desktop):
 
-> **我**：帮我看看这个单体怎么拆
-> **AI**：`load_workspace` 载入分析结果…12 个服务，模度 0.55，跨服务通信占比 19.9%，
->         共享内核 7 个类。`get_partition_summary` 摘要如下：job-service(16) / file-service(12) / …
-> **我**：SysUserServiceImpl 为什么在 user-service？
-> **AI**：`get_class_info` → SERVICE_IMPL，25 条出边中 8 条连接 user-service 的类
->         （`neighborConcentration`），最强依赖 SysUserMapper(weight 12) 同服务。
-> **我**：把它移到 job-service 试试
-> **AI**：`move_class` → crossRatio 0.1994 → **0.2134**，modularity 0.5476 → **0.5379**（两项均变差）。
->         建议撤销：`undo` 已恢复，指标回落。
+> **Me**: how should I split this monolith?
+> **AI**: `load_workspace`… 12 services, modularity 0.55, cross-service communication 19.9%,
+>         shared kernel of 7 classes. `get_partition_summary`: job-service(16) / file-service(12) / …
+> **Me**: why is SysUserServiceImpl in user-service?
+> **AI**: `get_class_info` → SERVICE_IMPL; 8 of its 25 out-edges point into user-service
+>         (`neighborConcentration`), and its strongest dependency SysUserMapper (weight 12) is in the same service.
+> **Me**: try moving it to job-service
+> **AI**: `move_class` → crossRatio 0.1994 → **0.2134**, modularity 0.5476 → **0.5379** (both worse).
+>         Recommend undo — `undo` applied, metrics restored.
 
-## RuoYi 4.8.3 实测（285 源文件）
+## Case study: RuoYi 4.8.3 (285 source files)
 
-| 阶段 | 结果 |
+| Stage | Result |
 |---|---|
-| analyze | 290 类注册 / 980 条加权依赖边 / 92 依赖 jar 自动解析 |
-| partition | 模度 Q=0.81，12 个服务，跨服务通信占比 ~15% |
-| 已知边界恢复 | ruoyi-quartz → job 服务（16/19 类）、ruoyi-generator → table 服务、system 各功能域切成 user/role/post/dict 等垂直切片 |
-| generate | 12 服务 + common 共享内核 / 16 组 RPC 桥 / 13 处注入自动改写 / 21 个 mapper XML 迁移 |
-| 验收 | **生成工程 `mvn compile` 通过**，残余 4 项列入 MIGRATION.md |
+| analyze | 290 classes / 980 weighted dependency edges / 92 dependency jars auto-resolved |
+| partition | modularity Q=0.81, 12 services, ~15% cross-service communication |
+| known boundaries recovered | ruoyi-quartz → job service (16/19 classes), ruoyi-generator → table service, system module split into user/role/post/dict vertical slices |
+| generate | 12 services + shared common kernel / 16 RPC bridges / 13 injections rewritten / 21 mapper XMLs migrated |
+| acceptance | **generated projects pass `mvn compile`**; 4 residual items listed in MIGRATION.md |
 
-## 算法要点
+## Algorithm highlights
 
-- **依赖边权重**：继承 3 / 字段 2 / 方法调用·参数·注解·构造 1，来源行号全程留痕
-- **双图融合**：`α·静态/max + β·动态/max`（默认 0.5/0.5），放大 1000 倍取整防小边截断
-- **Louvain**：完整两阶段（局部移动 + 图聚合），手写实现
-- **退火精化**：目标函数 = 0.5·跨服务通信占比 + 0.3·用例跨度（Mono2Micro 核心洞察：用例调用链跨服务越多延迟越差）+ 0.2·规模失衡度
-- **共享内核**：高扇入且横跨 ≥3 社区的类自动剥离；生成期再做内核依赖闭包 + 跨服务共享类提升（服务间禁止类级依赖）
-- **RPC 改写规则**：跨服务服务接口的字段注入 → 消费端镜像客户端（RestTemplate）+ 提供端 `@RestController` 桥；varargs/泛型/多参数原样镜像
+- **Edge weights**: inheritance 3 / field 2 / method call·parameter·annotation·constructor 1, with source line provenance throughout
+- **Dual-graph fusion**: `α·static/max + β·dynamic/max` (0.5/0.5 by default), scaled ×1000 before rounding so tiny edges don't truncate to zero
+- **Louvain**: full two-phase implementation (local moving + aggregation), hand-written
+- **Annealing refinement**: objective = 0.5·cross-service communication ratio + 0.3·use-case span (Mono2Micro's core insight: the more services a use-case call chain crosses, the worse the latency) + 0.2·size imbalance
+- **Shared kernel**: high-fan-in classes spanning ≥3 communities are peeled off automatically; generation then closes the kernel's dependencies and hoists cross-service shared classes (class-level dependencies between services are forbidden)
+- **RPC rewrite rules**: field injection of a cross-service interface → mirrored RestTemplate client on the consumer + `@RestController` bridge on the provider; varargs/generics/multi-arg methods mirrored as-is
 
-## 能力边界（不装全能）
+## Known limits (no silver bullets)
 
-- 事务/锁/反射跨服务边界的语义保持无法全自动，全部列入 MIGRATION.md
-- 客户端返回值强转依赖 JSON 反序列化，关键接口上线前建议补显式 DTO
-- 运行时分析质量取决于用例覆盖度；纯静态模式是保底
-- 目标栈为 Spring Boot（原版是 Open Liberty）；依赖管理须显式声明
-  （根 pom 带 `dependencyManagement`/BOM——RuoYi 式写法；纯 parent 继承式管理的单体
-  生成工程会缺 BOM 版本，需手工补）
-- 运行生成的服务需要数据库与配置迁移（本工具负责编译级正确 + 迁移清单；
-  RPC 桥运行级正确由 `codegen` 的 failsafe 集成测试守护：生成工程 install →
-  双服务启动 → HTTP 断言桥贯通）
+- Transactions/locks/reflection across service boundaries can't be preserved automatically — all listed in MIGRATION.md
+- Client-side return values rely on JSON deserialization casts; add explicit DTOs for critical interfaces before production
+- Runtime analysis quality depends on use-case coverage; pure static mode is the fallback
+- Target stack is Spring Boot (the original used Open Liberty); dependency management must be explicit
+  (root pom with `dependencyManagement`/BOM — the RuoYi style; monoliths using pure parent-inheritance
+  dependency management will produce projects missing BOM versions, to be patched by hand)
+- Running the generated services requires database/config migration (this tool guarantees
+  compile-level correctness + the migration list; runtime correctness of the RPC bridge is
+  guarded by codegen's failsafe integration test: generated projects install → both services
+  started → bridge exercised over HTTP)
 
-## 测试
+## Tests
 
-`mvn test`：Louvain 双簇恢复、单社区、空图；轨迹解析（单线程用例切分、多线程交织）。
+`mvn test`: Louvain two-cluster recovery, single-community, empty graph; trace parsing
+(single-thread use-case splitting, multi-thread interleaving).
 
-## 许可证
+## License
 
 [Apache-2.0](LICENSE)
