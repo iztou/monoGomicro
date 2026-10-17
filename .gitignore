@@ -18,3 +18,6 @@ dependency-reduced-pom.xml
 # 工具运行产物（实测数据 analysis/partition 作为验收证据入库，生成工程不入库）
 m2m-out/services/
 *.log
+
+# ZCode 本地会话产物
+.zcode/

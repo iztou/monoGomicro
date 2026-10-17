@@ -219,9 +219,9 @@ class McpHttpIT {
     }
 
     /**
-     * 响应可能是纯 JSON，也可能是 SSE 流（text/event-stream）。SDK 的 SSE 事件只在 JSON
-     * 首行前写一个 data: 前缀，JSON 本体（INDENT_OUTPUT 多行）原样跟随直到空行（事件边界）——
-     * 因此解析从 data: 行起收集到空行为止，而非逐行找 data: 前缀。
+     * 响应为合法 SSE：JSON 载荷必须整体在 data: 行内（紧凑 mapper 单行输出）。
+     * 收集事件内全部 data: 行以 \n 拼接（SSE 规范多 data 行语义），并断言载荷单行
+     * ——多行说明协议通道又用回了带缩进的展示 mapper（回归 R-03）。
      */
     private JsonNode parse(Resp resp) throws Exception {
         assertEquals(200, resp.status(), "body=" + resp.body());
@@ -230,20 +230,21 @@ class McpHttpIT {
         try {
             if (ct.contains("text/event-stream")) {
                 StringBuilder data = new StringBuilder();
-                boolean collecting = false;
+                boolean inEvent = false;
                 for (String l : body.split("\n", -1)) {
-                    if (!collecting) {
-                        if (l.startsWith("data:")) {
-                            collecting = true;
-                            data.append(l.length() > 5 && l.charAt(5) == ' ' ? l.substring(6) : l.substring(5));
+                    if (l.startsWith("data:")) {
+                        inEvent = true;
+                        if (data.length() > 0) {
+                            data.append('\n');
                         }
-                    } else if (l.isEmpty()) {
-                        break; // SSE 事件结束（空行）
-                    } else {
-                        data.append('\n').append(l);
+                        data.append(l.length() > 5 && l.charAt(5) == ' ' ? l.substring(6) : l.substring(5));
+                    } else if (l.isEmpty() && inEvent) {
+                        break; // SSE 事件边界
                     }
                 }
                 assertFalse(data.isEmpty(), "SSE 响应无 data 行：" + body);
+                assertEquals(-1, data.indexOf("\n"),
+                        "SSE data 载荷必须单行（紧凑 JSON），实际多行：" + data);
                 return JsonIO.mapper().readTree(data.toString());
             }
             return JsonIO.mapper().readTree(body);

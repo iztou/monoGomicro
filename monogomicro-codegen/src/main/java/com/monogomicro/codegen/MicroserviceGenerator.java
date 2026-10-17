@@ -206,11 +206,15 @@ public class MicroserviceGenerator {
      * dryRun=true —— 完整生成在临时目录执行后清理，只返回统计与迁移清单，目标目录不受任何影响；
      * dryRun=false 且 overwrite=false 时，目标目录已存在且非空报 E_OUTPUT_EXISTS 而非清空。
      *
+     * 所有入口共用 {@link #guardOutDir}：目标目录将被清空重建，空路径 / 当前工作目录 /
+     * 原项目根 / 包含它们的祖先目录一律在删除前拒绝（R-01：曾在输入校验失败前就删了目标目录）。
+     *
      * 注意：本类持有一次性生成状态（ownerOf/result 等），同一实例只能成功执行一次 generate；
      * dry-run 摸底后再正式生成，请用新实例调 dryRun=false。
      */
     public GenerationResult generate(Path out, GenerateOptions options) throws Exception {
-        Path outDir = out.toAbsolutePath();
+        Path outDir = out.toAbsolutePath().normalize();
+        guardOutDir(outDir);
         if (options.isDryRun()) {
             Path tempDir = Files.createTempDirectory("m2m-dryrun-");
             try {
@@ -233,6 +237,34 @@ public class MicroserviceGenerator {
         return doGenerate(outDir);
     }
 
+    /**
+     * 输出目录守卫（删除前拒绝危险路径）：空路径（等价当前工作目录）、当前工作目录、
+     * 原项目根、以及包含二者任一的祖先目录。正常用法（项目内子目录 / 独立目录）不受影响。
+     */
+    private void guardOutDir(Path outDir) {
+        String s = outDir.toString();
+        if (s.isBlank() || s.equals(".")) {
+            throw new M2mException("E_BAD_OUT_DIR",
+                    "输出目录不能为空（生成会清空重建，空路径等于当前工作目录）",
+                    "指定明确的输出目录，如 <project>/m2m-out/services");
+        }
+        Path cwd = Path.of("").toAbsolutePath().normalize();
+        if (outDir.equals(cwd)) {
+            throw new M2mException("E_BAD_OUT_DIR", "输出目录不能是当前工作目录：" + outDir,
+                    "指定一个专用的输出子目录");
+        }
+        Path project = projectDir.toAbsolutePath().normalize();
+        if (outDir.equals(project)) {
+            throw new M2mException("E_BAD_OUT_DIR", "输出目录不能是原项目根：" + outDir,
+                    "生成会清空重建该目录、删除全部源码；指定项目外或项目内子目录");
+        }
+        if (project.startsWith(outDir) || cwd.startsWith(outDir)) {
+            throw new M2mException("E_BAD_OUT_DIR",
+                    "输出目录包含原项目或当前工作目录，拒绝清空：" + outDir,
+                    "输出目录必须是原项目/工作目录的子目录，或完全独立的目录");
+        }
+    }
+
     private static boolean isNonEmptyDir(Path dir) throws IOException {
         if (!Files.isDirectory(dir)) {
             return false;
@@ -243,15 +275,18 @@ public class MicroserviceGenerator {
     }
 
     private GenerationResult doGenerate(Path outDir) throws Exception {
+        // 顺序纪律（R-01）：先完成所有会让生成失败的输入校验（POM 解析等），再删除目标目录——
+        // 顺序颠倒会"校验失败前已把目标目录清空"
+        pomReader = new PomReader();
+        pomReader.readProject(projectDir);
+
         deleteRecursively(outDir);
         Files.createDirectories(outDir);
         result.setOutputDir(outDir);
 
-        pomReader = new PomReader();
-        pomReader.readProject(projectDir);
-
         // 归属关系：内核 -> common，其余 -> svc-<name>
         Set<String> kernel = new LinkedHashSet<>(partition.getKernelClasses());
+        Set<String> usedTags = new java.util.HashSet<>();
         List<String[]> serviceDirs = new ArrayList<>(); // {目录名, 社区名}
         List<String> moduleTags = new ArrayList<>();
         for (String fqcn : kernel) {
@@ -259,6 +294,12 @@ public class MicroserviceGenerator {
         }
         for (PartitionResult.Community c : partition.getCommunities()) {
             String tag = serviceTag(c.getName(), c.getId());
+            // R-07：user 与 user-service 的 tag 都是 user，重复目录会让 modules 重复、
+            // 两个社区的类互相覆盖——冲突时追加社区 id 保证目录唯一
+            while (usedTags.contains(tag)) {
+                tag = tag + "-" + c.getId();
+            }
+            usedTags.add(tag);
             String dir = "svc-" + tag;
             serviceDirs.add(new String[]{dir, c.getName()});
             moduleTags.add(dir);

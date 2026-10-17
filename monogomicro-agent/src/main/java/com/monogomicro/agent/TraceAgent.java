@@ -75,13 +75,27 @@ public final class TraceAgent {
                 .with(AgentBuilder.Listener.NoOp.INSTANCE)
                 .type(typeMatcher)
                 .transform((builder, type, classLoader, module, protectionDomain) -> builder
-                        .visit(Advice.to(EntryAdvice.class).on(
-                                ElementMatchers.named(finalEntryMethod)
-                                        .and(ElementMatchers.isDeclaredBy(
-                                                ElementMatchers.nameContains(finalEntryClass)))))
                         .visit(Advice.to(MethodAdvice.class).on(
                                 ElementMatchers.isMethod()
                                         .and(ElementMatchers.not(ElementMatchers.isSynthetic())))))
+                .installOn(inst);
+
+        // 入口类（如 Spring 的 DispatcherServlet）几乎总在框架包、不在 include 业务包内——
+        // 必须用独立 builder 织入，不受 include 限制（R-02：曾与业务类型共用一个 type 过滤器，
+        // 导致入口永不匹配、E 行永不产生、运行时分析整体失效）。入口统一由这里织入
+        // （上面的业务 builder 不含 EntryAdvice，include 内外都不会重复）。
+        var entryType = ElementMatchers.<net.bytebuddy.description.type.TypeDescription>nameContains(finalEntryClass)
+                .and(ElementMatchers.not(ElementMatchers.nameStartsWith("com.monogomicro.agent")));
+        new AgentBuilder.Default()
+                .disableClassFormatChanges()
+                .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
+                .with(AgentBuilder.Listener.NoOp.INSTANCE)
+                .type(entryType)
+                .transform((builder, type, classLoader, module, protectionDomain) -> builder
+                        .visit(Advice.to(EntryAdvice.class).on(
+                                ElementMatchers.named(finalEntryMethod)
+                                        .and(ElementMatchers.isDeclaredBy(
+                                                ElementMatchers.nameContains(finalEntryClass))))))
                 .installOn(inst);
 
         System.out.println("[monogomicro] 轨迹采集已启动 -> " + out + "（include=" + includes + "）");

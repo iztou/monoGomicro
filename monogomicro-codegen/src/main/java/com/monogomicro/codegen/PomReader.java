@@ -46,12 +46,36 @@ public class PomReader {
         if (poms.isEmpty()) {
             throw new IllegalStateException("原项目没有 pom.xml，无法生成 Maven 工程");
         }
-        Document root = parse(poms.get(0));
-        projectGroupId = textOf(root, "groupId", "generated");
-        projectVersion = textOf(root, "version", "1.0.0");
+        // 根 POM 固定为 projectDir/pom.xml（poms 排序按路径，app/pom.xml 会排在根前面）；
+        // 坐标只取 <project> 直接子元素——getElementsByTagName 取文档序第一个同名标签，
+        // parent-first POM（Spring Boot 常见）会先命中 <parent> 里的 groupId/version（R-05）
+        Path rootPom = projectDir.resolve("pom.xml").normalize();
+        if (!poms.contains(rootPom)) {
+            rootPom = poms.get(0);
+        }
+        Document root = parse(rootPom);
+        projectGroupId = directChildText(root.getDocumentElement(), "groupId");
+        if (projectGroupId == null) {
+            projectGroupId = textOf(root, "groupId", "generated"); // 回退 parent 声明
+        }
+        projectVersion = directChildText(root.getDocumentElement(), "version");
+        if (projectVersion == null) {
+            projectVersion = textOf(root, "version", "1.0.0");
+        }
         for (Path pom : poms) {
             merge(parse(pom));
         }
+    }
+
+    /** <project> 的直接子元素文本（不含 parent/dependencies 内的同名标签）；无则 null。 */
+    private static String directChildText(Element project, String tag) {
+        NodeList children = project.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            if (children.item(i) instanceof Element el && el.getTagName().equals(tag)) {
+                return el.getTextContent().trim();
+            }
+        }
+        return null;
     }
 
     private void merge(Document doc) {

@@ -96,6 +96,9 @@ public final class PartitionMetrics {
      */
     public static double imbalance(Map<Integer, List<String>> byCommunity) {
         int k = byCommunity.size();
+        if (k == 0) {
+            return 0; // 无服务时规模失衡无意义；返回 0 保证 JSON 契约是 number（NaN 会被写成字符串 "NaN"）
+        }
         int totalClasses = byCommunity.values().stream().mapToInt(List::size).sum();
         double mean = totalClasses / (double) k;
         double variance = 0;

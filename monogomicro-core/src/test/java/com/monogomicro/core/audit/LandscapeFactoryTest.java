@@ -38,6 +38,17 @@ class LandscapeFactoryTest {
     }
 
     @Test
+    void sharedHintMatchesTokenBoundaryOnly() {
+        // R-10：contains 会把 rapid-service（含 "api"）误判为 shared，词元匹配不受影响
+        ServiceLandscape l = LandscapeFactory.from(reportOf(
+                cls("com.x.A", "rapid-service"), cls("com.x.B", "ruoyi-api-system"),
+                cls("com.x.C", "ruoyi-common")));
+        assertFalse(l.isSharedService("rapid-service"), "rapid-service 是业务服务（api 只是子串）");
+        assertTrue(l.isSharedService("ruoyi-api-system"));
+        assertTrue(l.isSharedService("ruoyi-common"));
+    }
+
+    @Test
     void aggregatesByMavenModuleByDefault() {
         ServiceLandscape l = LandscapeFactory.from(reportOf(
                 cls("com.a.Foo", "svc-a"), cls("com.a.Bar", "svc-a"), cls("com.b.Baz", "svc-b")));

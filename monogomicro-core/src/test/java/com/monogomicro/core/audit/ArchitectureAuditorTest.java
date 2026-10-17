@@ -208,11 +208,16 @@ class ArchitectureAuditorTest {
         // 空图 / 全 shared / 单服务
         AuditReport empty = ArchitectureAuditor.audit(new DependencyGraph(), new ServiceLandscape(List.of()));
         assertEquals(0, empty.getSummary().getClassCount());
+        // R-06：无业务服务时指标必须是有限数值（NaN 会被 Jackson 写成字符串破坏 JSON 契约）
+        assertTrue(Double.isFinite(empty.getSummary().getImbalanceCv()));
+        assertTrue(Double.isFinite(empty.getSummary().getBoundaryCoupling()));
+        assertTrue(Double.isFinite(empty.getSummary().getModularity()));
 
         Fixture allShared = new Fixture().svc("common", 3, true).svc("util", 2, true)
                 .edge("common", 0, "util", 0, 2);
         AuditReport r1 = ArchitectureAuditor.audit(allShared.graph, allShared.landscape());
         assertEquals(0, r1.getSummary().getBusinessServiceCount());
+        assertTrue(Double.isFinite(r1.getSummary().getImbalanceCv()));
 
         Fixture single = new Fixture().svc("only", 3).edge("only", 0, "only", 1, 4);
         AuditReport r2 = ArchitectureAuditor.audit(single.graph, single.landscape());

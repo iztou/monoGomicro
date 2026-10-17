@@ -131,16 +131,18 @@ public class WorkspaceController {
         return ResponseEntity.ok(Map.of("saved", path));
     }
 
-    public record GenerateRequest(String projectDir, String outDir) {}
+    public record GenerateRequest(String projectDir, String outDir, Boolean overwrite) {}
 
     @PostMapping("/api/generate")
     public ResponseEntity<?> generate(@RequestBody GenerateRequest req) throws Exception {
         if (!state.isLoaded()) {
             return ResponseEntity.status(409).body(Map.of("error", "尚未载入数据"));
         }
+        // 与 CLI/MCP 同一安全语义：默认不覆盖非空目录（R-01），显式传 overwrite=true 才清空重建
+        boolean overwrite = req.overwrite() != null && req.overwrite();
         GenerationResult result = new MicroserviceGenerator(
                 state.report(), state.partition(), Path.of(req.projectDir()))
-                .generate(Path.of(req.outDir()));
+                .generate(Path.of(req.outDir()), new com.monogomicro.codegen.GenerateOptions(false, overwrite));
         return ResponseEntity.ok(Map.of("summary", result.summary(),
                 "manualItems", result.getManualItems()));
     }

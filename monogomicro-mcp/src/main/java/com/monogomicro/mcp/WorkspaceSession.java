@@ -276,9 +276,17 @@ final class WorkspaceSession {
             if (name == null || name.isBlank()) {
                 throw new M2mException("E_BAD_PARAMS", "服务名不能为空", null);
             }
+            // R-07：重名会让生成阶段两个社区 sanitize 出同一 tag/目录（user 与 user-service 都成 user）
+            String trimmed = name.trim();
+            boolean duplicate = partition.getCommunities().stream()
+                    .anyMatch(c -> c.getId() != serviceId && trimmed.equalsIgnoreCase(c.getName()));
+            if (duplicate) {
+                throw new M2mException("E_DUPLICATE_SERVICE_NAME", "已有同名服务：" + trimmed,
+                        "服务名在生成阶段决定 svc-<tag> 目录，重名会导致目录冲突；请换一个名字");
+            }
             undoPush(new RenameEdit(serviceId, target.getName()));
             String oldName = target.getName();
-            target.setName(name.trim());
+            target.setName(trimmed);
             generationResult = null;
             return oldName;
         } finally {

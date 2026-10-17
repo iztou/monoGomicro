@@ -258,13 +258,18 @@ public final class Main implements Callable<Integer> {
                 description = "原单体项目根目录（用于拷贝源文件）")
         Path project;
 
+        @CommandLine.Option(names = "--overwrite", defaultValue = "false",
+                description = "目标目录已存在且非空时清空重建（默认拒绝并报 E_OUTPUT_EXISTS）")
+        boolean overwrite;
+
         @Override
         public Integer call() throws Exception {
             AnalysisReport report = JsonIO.read(analysis, AnalysisReport.class);
             PartitionResult partitionResult = JsonIO.read(partition, PartitionResult.class);
             com.monogomicro.codegen.MicroserviceGenerator generator =
                     new com.monogomicro.codegen.MicroserviceGenerator(report, partitionResult, project);
-            com.monogomicro.codegen.GenerationResult result = generator.generate(out);
+            com.monogomicro.codegen.GenerationResult result =
+                    generator.generate(out, new com.monogomicro.codegen.GenerateOptions(false, overwrite));
             System.out.println(result.summary());
             System.out.println("生成目录：" + out.toAbsolutePath());
             return 0;

@@ -126,12 +126,23 @@ public class AnnealingRefiner {
 
         double spanNorm = useCaseSpanNorm();
 
-        double mean = (double) java.util.Arrays.stream(communitySizes).sum() / k;
+        // R-11：退火中单点移动可能把社区移空——空社区不是真实社区，不应计入规模均值/方差
+        //（否则系统性抬高 imbalance，还会诱导"移入空社区"的坏邻居选择）。只统计非空社区。
+        int active = 0;
+        for (int s : communitySizes) {
+            if (s > 0) {
+                active++;
+            }
+        }
+        long sizeSum = java.util.Arrays.stream(communitySizes).sum();
+        double mean = active == 0 ? 0 : (double) sizeSum / active;
         double variance = 0;
         for (int s : communitySizes) {
-            variance += (s - mean) * (s - mean);
+            if (s > 0) {
+                variance += (s - mean) * (s - mean);
+            }
         }
-        variance /= k;
+        variance /= Math.max(1, active);
         double imbalance = mean == 0 ? 0 : Math.sqrt(variance) / mean;
 
         return options.wCommunication * crossRatio + options.wUseCaseSpan * spanNorm

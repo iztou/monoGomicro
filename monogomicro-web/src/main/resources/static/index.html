@@ -103,17 +103,23 @@ function renderMetrics(m) {
   mNodes.textContent = G ? G.nodes.length : '-';
 }
 
+function colorOf(id) { return id < 0 ? '#8b949e' : COLORS[id % COLORS.length]; }
+
+// 不可信名称（服务名/类名/module 来自外部 partition.json）拼 HTML 前必须转义（R-04）
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, ch =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+
 function renderCommunities() {
   const html = G.communities.map(c =>
-    `<div class="community"><span class="dot" style="background:${colorOf(c.id)}"></span>${c.name}（${c.size}）</div>`).join('')
+    `<div class="community"><span class="dot" style="background:${colorOf(c.id)}"></span>${esc(c.name)}（${c.size}）</div>`).join('')
     + `<div class="community"><span class="dot" style="background:#8b949e"></span>共享内核（${G.kernel.length}）</div>`;
   communities.innerHTML = html;
   legend.innerHTML = G.communities.slice(0, 12).map(c =>
-    `<div><span class="dot" style="background:${colorOf(c.id)}"></span>${c.name}</div>`).join('')
+    `<div><span class="dot" style="background:${colorOf(c.id)}"></span>${esc(c.name)}</div>`).join('')
     + `<div><span class="dot" style="background:#8b949e"></span>共享内核</div>`;
 }
-
-function colorOf(id) { return id < 0 ? '#8b949e' : COLORS[id % COLORS.length]; }
 
 function renderGraph() {
   const svg = d3.select('svg');
@@ -173,9 +179,9 @@ function renderGraph() {
 function selectNode(d) {
   selected = d.id;
   dName.textContent = d.name;
-  dTags.innerHTML = `<span class="tag">${d.stereotype}</span><span class="tag">${d.tier}</span><span class="tag">${d.module || ''}</span>`;
+  dTags.innerHTML = `<span class="tag">${esc(d.stereotype)}</span><span class="tag">${esc(d.tier)}</span><span class="tag">${esc(d.module || '')}</span>`;
   const opts = [`<option value="-1">共享内核</option>`]
-    .concat(G.communities.map(c => `<option value="${c.id}" ${c.id === d.community ? 'selected' : ''}>${c.name}</option>`));
+    .concat(G.communities.map(c => `<option value="${c.id}" ${c.id === d.community ? 'selected' : ''}>${esc(c.name)}</option>`));
   dMove.innerHTML = opts.join('');
   const related = G.links.filter(l => l.source === d.id || l.target === d.id)
     .sort((a, b) => b.weight - a.weight).slice(0, 10);
@@ -198,15 +204,21 @@ async function moveNode() {
 
 async function save() {
   try {
-    await fetch('/api/save?path=' + encodeURIComponent(savePath.value), {method: 'POST'});
+    const res = await fetch('/api/save?path=' + encodeURIComponent(savePath.value), {method: 'POST'});
+    if (!res.ok) { toast('保存失败：HTTP ' + res.status); return; }
     toast('已保存');
   } catch (e) { toast('保存失败'); }
 }
 
 async function generate() {
+  if (!projectDir.value.trim() || !outDir.value.trim()) {
+    toast('projectDir 与 outDir 必填（outDir 将被清空重建，禁止留空）');
+    return;
+  }
   genResult.textContent = '生成中…';
   try {
-    const r = await api('/api/generate', {projectDir: projectDir.value, outDir: outDir.value});
+    const r = await api('/api/generate',
+        {projectDir: projectDir.value, outDir: outDir.value, overwrite: true});
     genResult.textContent = r.summary + '\n\n需人工处理 ' + r.manualItems.length + ' 项（详见 MIGRATION.md）';
     toast('生成完成');
   } catch (e) { genResult.textContent = '失败：' + e.message; }

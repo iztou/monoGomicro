@@ -70,9 +70,18 @@ public final class LandscapeFactory {
         return new ServiceLandscape(new ArrayList<>(services.values()));
     }
 
+    /**
+     * 词元边界匹配（R-10 修正）：module 名按非字母数字切词元，词元与提示词完全相等才命中。
+     * contains 会把 rapid-service（含 "api"）这类业务名误判为 shared。
+     * RuoYi 的 ruoyi-api-* / ruoyi-common-* 仍按词元命中。
+     */
     private static boolean looksShared(String moduleName, Set<String> hints) {
-        String lower = moduleName.toLowerCase();
-        return hints.stream().anyMatch(lower::contains);
+        for (String token : moduleName.toLowerCase().split("[^a-z0-9]+")) {
+            if (hints.contains(token)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isDeclaredShared(ServicesConfig config, String serviceName) {

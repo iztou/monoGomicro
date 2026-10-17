@@ -35,7 +35,16 @@ public final class JsonIO {
         return MAPPER.readValue(file.toFile(), type);
     }
 
+    /** 展示用 mapper（缩进）：落盘文件与人读输出。 */
     public static ObjectMapper mapper() {
         return MAPPER;
+    }
+
+    /**
+     * 协议/机器通道用 mapper：禁止缩进——多行 JSON 会破坏按行分帧的协议
+     * （stdio JSON-RPC 每行一帧、SSE 的 data: 行载荷必须是单行，否则不是合法 SSE）。
+     */
+    public static ObjectMapper compactMapper() {
+        return MAPPER.copy().disable(SerializationFeature.INDENT_OUTPUT);
     }
 }

@@ -60,6 +60,9 @@ public class PartitionEngine {
         // 第二轮：服务分区 + 精化
         Map<String, Integer> labels = new LouvainPartitioner(options.getSeed() + 1).partition(serviceSym);
         mergeSmallCommunities(labels, serviceSym);
+        // R-11：合并会产生标签空洞（如 {0,2}），退火用 max+1 当社区数会把空社区算进
+        // 目标函数的均值/方差，系统性抬高 imbalance/span——进退火前必须连续化
+        labels = renumber(labels);
         AnnealingRefiner.Options annealOpts = new AnnealingRefiner.Options();
         annealOpts.minCommunitySize = options.getMinCommunitySize();
         annealOpts.seed = options.getSeed();

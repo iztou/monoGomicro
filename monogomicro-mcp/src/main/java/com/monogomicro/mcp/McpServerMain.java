@@ -94,7 +94,9 @@ public final class McpServerMain {
     private static void startHttp(Options opts) throws Exception {
         HttpServletStreamableServerTransportProvider provider =
                 HttpServletStreamableServerTransportProvider.builder()
-                        .jsonMapper(new JacksonMcpJsonMapper(JsonIO.mapper()))
+                        // 协议通道必须用紧凑 mapper：INDENT_OUTPUT 的多行 JSON 会让 SSE 的
+                        // data: 载荷跨行，产生非法 SSE（标准客户端只取到 "{"）
+                        .jsonMapper(new JacksonMcpJsonMapper(JsonIO.compactMapper()))
                         .mcpEndpoint("/mcp")
                         .keepAliveInterval(Duration.ofSeconds(30))
                         // 本地/内网服务防 DNS rebinding：Host 头必须是监听地址或 loopback
