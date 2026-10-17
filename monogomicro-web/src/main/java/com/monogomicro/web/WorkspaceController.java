@@ -33,6 +33,26 @@ public class WorkspaceController {
 
     public record LoadRequest(String analysisPath, String partitionPath) {}
 
+    /** audit 请求体：可选 services.json 修正自动推导的现状边界。 */
+    public record AuditRequest(String servicesPath) {}
+
+    /** 架构体检：现状边界指标 + 六类反模式（只读，不依赖分区状态）。 */
+    @PostMapping("/api/audit")
+    public Object audit(@RequestBody(required = false) AuditRequest req) throws Exception {
+        if (!state.isLoaded()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.CONFLICT, "尚未载入数据，请先 POST /api/load");
+        }
+        com.monogomicro.core.audit.ServicesConfig cfg = null;
+        if (req != null && req.servicesPath() != null && !req.servicesPath().isBlank()) {
+            cfg = JsonIO.read(Path.of(req.servicesPath()), com.monogomicro.core.audit.ServicesConfig.class);
+            cfg.validate();
+        }
+        com.monogomicro.core.audit.ServiceLandscape landscape =
+                com.monogomicro.core.audit.LandscapeFactory.from(state.report(), cfg);
+        return com.monogomicro.core.audit.ArchitectureAuditor.audit(state.graph(), landscape);
+    }
+
     @PostMapping("/api/load")
     public Object load(@RequestBody LoadRequest req) throws Exception {
         AnalysisReport report = JsonIO.read(Path.of(req.analysisPath()), AnalysisReport.class);

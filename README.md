@@ -147,6 +147,31 @@ A real conversation (RuoYi, Claude Desktop):
 > **AI**: `move_class` → crossRatio 0.1994 → **0.2134**, modularity 0.5476 → **0.5379** (both worse).
 >         Recommend undo — `undo` applied, metrics restored.
 
+## Architecture audit (for existing microservices)
+
+`m2m audit` examines a codebase that is **already microservices** (Maven multi-module monorepo).
+Service boundaries are derived from Maven modules automatically (or corrected via an optional
+`services.json`); the report covers metrics — **boundary coupling** (compile-time dependency
+semantics, shared libs excluded), modularity, per-service fan-in/out — plus six anti-pattern
+checks: service cycles (Tarjan SCC), god services, should-merge pairs, hollow services,
+shared-lib abuse, and misplaced classes (inheritance misplaced escalates to critical).
+
+```bash
+m2m analyze /path/to/microservice-repo -p com.your.pkg -o m2m-out
+m2m audit -a m2m-out/analysis.json --suggest -o m2m-out   # + refactoring advice with sandbox deltas
+```
+
+`--suggest` compares the as-is boundaries against a reference partition (same graph, aligned
+greedily) and proposes move-groups with simulated metric deltas — moves that would worsen
+metrics are kept but flagged (they often reveal constraints the algorithm can't see).
+Also available over MCP: `audit_architecture` / `suggest_refactoring` (read-only).
+
+Real-world check on RuoYi-Cloud (274 classes / 16 modules): boundary coupling **0.0000**
+(business services have zero compile-time cross-dependencies — they talk through the shared
+Feign API modules, exactly what a well-factored microservice should look like), while the
+incl-shared view is 0.5755; the god-service finding on the 71-class system module and
+shared-lib abuse findings (StringUtils etc. depended on by 6/7 services) all check out.
+
 ## Case study: RuoYi 4.8.3 (285 source files)
 
 | Stage | Result |

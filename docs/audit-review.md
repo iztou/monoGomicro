@@ -130,3 +130,20 @@ v2 §5.5 CLI 签名含 `[--config 阈值覆盖]`，Q1 定论写明"固定默认 
 ## C. 结论
 
 **阶段 0-5 批准**，质量高于预期（实施中主动暴露并修复三个真问题）。阶段 6 开始前请先修 B1（影响报告主指标之一的口径）与 B3；B2/B4/B5 随阶段 6/7 一并收尾。
+
+
+---
+
+# 附 2：B1-B5 修复复核（Kimi，2026-10-17 16:20，HEAD=2c424a9 develop）
+
+| 问题 | 修复核查 | 结论 |
+|---|---|---|
+| B1 模度幻影社区 | `PartitionMetrics.of` 重载内过滤 -1 后再算 modularity；旧路径（先过滤再传入）为 no-op，分区行为不变——**经冻结输入基线对拍实证**（diff identical）；新增回归测试 `sharedPhantomCommunityDoesNotInflateModularity`（shared 间重边不得影响 Q）。冒烟：模度 0.3558 → **0.2535**，水分挤出 | ✅ |
+| B2 `--config` 入口 | CLI 新增 `-c/--config`（JsonIO 读 AuditConfig，未知字段容错）；MCP 侧 configPath 为可选项未加，符合评审"可选"定位 | ✅ |
+| B3 MCP 提示语 | note 改写为口径说明 + CLI 落盘指引，并实际带出 `config` 字段（生效阈值） | ✅ |
+| B4 基线锚定输入 | `ruoyi-analysis-input.json`（冻结输入）+ `README.md`（复现命令与对拍流程）入库；**意外收获**：README 记录基线生成时用了 `--no-maven-classpath`——B4 的 47 条边权重漂移根因由此确认（classpath 解析开关不同，非 .m2 漂移）。按 README 流程在 HEAD 复跑对拍：**diff identical** | ✅ |
+| B5 文档同步 | 设计文档回写 mergePair ≥ / hollowService fanIn>0 / 沙盘目标对齐现状服务 / 未配对参考社区的简化已注明；`findingId` 改为 `type:hash`（如 `serviceCycle:a3f2…`）；`labelOf` 替换为 O(1) 索引 | ✅ |
+
+修复后全量 `mvn verify`：71 单测 + 4 IT 全绿（core 44，新增 B1 回归测试）。
+
+**结论：B1-B5 全部修复到位，阶段 0-5 整体复核通过，可以进入阶段 6（真实微服务样本冒烟）。**

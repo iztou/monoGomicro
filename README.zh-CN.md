@@ -140,6 +140,28 @@ npx @modelcontextprotocol/inspector java -jar monogomicro-mcp/target/m2m-mcp.jar
 > **AI**：`move_class` → crossRatio 0.1994 → **0.2134**，modularity 0.5476 → **0.5379**（两项均变差）。
 >         建议撤销：`undo` 已恢复，指标回落。
 
+## 架构体检（面向已有微服务）
+
+`m2m audit` 体检一个**已经是微服务**的工程（Maven 多模块 monorepo）。服务边界默认按
+Maven module 自动推导（可选 `services.json` 修正）；报告含指标——**边界耦合率**
+（编译期依赖语义，剔除 shared 库）、模度、每服务扇入/扇出——与六类反模式检测：
+服务级循环依赖（Tarjan SCC）、上帝服务、该合并对、哑服务、共享库滥用、归属错位类
+（继承错位升为 critical）。
+
+```bash
+m2m analyze /path/to/microservice-repo -p com.your.pkg -o m2m-out
+m2m audit -a m2m-out/analysis.json --suggest -o m2m-out   # 附优化建议（含沙盘指标 delta）
+```
+
+`--suggest` 将现状边界与参考分区（同一张图贪心对齐）对比，输出移动类群建议并附
+模拟指标 delta——沙盘变差的建议保留但标注 warning（它们往往揭示算法看不见的约束）。
+MCP 同名能力：`audit_architecture` / `suggest_refactoring`（只读）。
+
+RuoYi-Cloud 实测（274 类 / 16 模块）：边界耦合率 **0.0000**——业务服务之间编译期
+零直接依赖（跨服务交互全部走 shared 的 Feign API 模块，正是良构微服务该有的样子），
+含 shared 口径为 0.5755；71 类 system 模块的上帝服务发现、StringUtils 被 6/7 服务
+依赖的共享库滥用发现均核验属实。
+
 ## RuoYi 4.8.3 实测（285 源文件）
 
 | 阶段 | 结果 |
