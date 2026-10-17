@@ -2,7 +2,7 @@
 
 > 状态：v1 → Kimi 评审（`docs/audit-review.md`，2026-10-17）→ 断言逐条复核属实 → v2 合入全部修订意见，**待实施**。
 > 本文档自包含：未参与设计讨论的实施者不需要额外上下文。
-> v2 相对 v1 的关键变化：指标语义修正（边界耦合率而非通信占比，§5.2）、重构点 2 改写（§5.4）、services.json 契约扩展（§5.1）、反模式公式精确化与实现约束（§5.2.2）、参考分区参数适配（§5.3）、原 §9 开放问题全部定论并入正文。
+> v2 相对 v1 的关键变化：指标语义修正（边界耦合率而非通信占比，§5.2）、重构点 2 改写（§5.6）、services.json 契约扩展（§5.1）、反模式公式精确化与实现约束（§5.3）、参考分区参数适配（§5.5）、原 §9 开放问题全部定论并入正文。
 
 ## 1. 项目背景（30 秒版）
 
@@ -25,14 +25,14 @@ monoGomicro 是一个 Java 单体 → 微服务拆分建议工具（IBM Mono2Mic
 
 输入一个**已经是微服务的工程**（Maven 多模块 monorepo，如 RuoYi-Cloud），输出：
 
-1. **现状体检报告**：架构指标（**边界耦合率**、模度、每服务扇入/扇出、规模失衡——指标语义见 §5.2.0）+ 六类反模式检测（§5.2.2）
+1. **现状体检报告**：架构指标（**边界耦合率**、模度、每服务扇入/扇出、规模失衡——指标语义见 §5.2）+ 六类反模式检测（§5.3）
 2. **优化建议**：对同一张依赖图跑一版参考分区，与现状边界对比，输出合并/拆分/移动类群建议；**每条建议附模拟指标 delta**（沙盘推演，不修改任何状态）
 3. 入口：CLI 新子命令 `m2m audit`、MCP 只读工具 `audit_architecture` / `suggest_refactoring`、web `/api/audit` 端点（前端视图可裁剪，见 §6）
 
 ### 非目标
 
 - **跨服务运行时追踪**（traceId 跨进程传播 + 多实例聚合）——APM（SkyWalking）的领地
-- **渐进式重构执行器**（直接修改原工程）——本轮不做，findings 稳定 id（§5.2.3）为其预留锚点
+- **渐进式重构执行器**（直接修改原工程）——本轮不做，findings 稳定 id（§5.4）为其预留锚点
 - 非 JVM 栈、非 Maven 工程
 - 不替代现有单体拆分流程（并行关系，见 §4 铁律与 §8 示意）
 
@@ -46,8 +46,8 @@ monoGomicro 是一个 Java 单体 → 微服务拆分建议工具（IBM Mono2Mic
 | `DependencyGraph` | `core/graph/DependencyGraph.java` | 节点/边/权重 API；`symmetrized()`（:109-121）**实际实现为双向求和**（方法上的 max 注释是陈旧注释，以实现为准；实施阶段顺手修正注释）；`outEdges` O(出度)，`inEdges` O(V)（audit 扇入统计须一遍扫边聚合，禁止逐类调 `inEdges`） |
 | `LouvainPartitioner.modularity(sym, labels)` | `core/partition/LouvainPartitioner.java:267` | 静态纯函数，接受任意 `Map<String,Integer>` 标签 |
 | `PartitionMetrics.of(graph, partition)` | `core/partition/PartitionMetrics.java:30`（labels 构建与计算耦合 :33-46） | crossRatio 基于原始有向图（:50-61） |
-| 丰富统计（fanIn/fanOut/intra、imbalance、useCaseSpan） | `PartitionEngine.buildResult` 内联（:300-375；fanIn/fanOut/intra :301-340 基于融合对称图且 `/2` 还原，imbalance :342-348，useCaseSpan :350-375） | **与 audit 口径不同，不能整体下沉复用**（§5.4） |
-| `PartitionEngine` / `PartitionOptions` | `PartitionEngine.java:46`；`PartitionOptions.java:12`（maxServices 默认 12） | 参考分区直接调用（只读）；参数须适配（§5.3） |
+| 丰富统计（fanIn/fanOut/intra、imbalance、useCaseSpan） | `PartitionEngine.buildResult` 内联（:300-375；fanIn/fanOut/intra :301-340 基于融合对称图且 `/2` 还原，imbalance :342-348，useCaseSpan :350-375） | **与 audit 口径不同，不能整体下沉复用**（§5.6） |
+| `PartitionEngine` / `PartitionOptions` | `PartitionEngine.java:46`；`PartitionOptions.java:12`（maxServices 默认 12） | 参考分区直接调用（只读）；参数须适配（§5.5） |
 | MCP 工具注册模式 | `McpServerMain.toolSpecs()` / `McpTools` | 新只读工具照 `get_metrics` 抄（readOnly 注解、≤4KB 渐进披露） |
 | JSON 兼容机制 | `JsonIO.java`（`FAIL_ON_UNKNOWN_PROPERTIES=false` + 写前版本盖章） | 新结构/新字段无破坏性 |
 | `DependencyEdge.kindSet()` | `DependencyEdge.java:68`（EdgeKind :14，INHERITANCE 权重 3） | 错位类的"继承错位"子类判定用 |
@@ -71,7 +71,7 @@ monoGomicro 是一个 Java 单体 → 微服务拆分建议工具（IBM Mono2Mic
 
 ## 5. 详细设计
 
-### 5.0 现状边界模型：`ServiceLandscape`（core 新包 `com.monogomicro.core.audit`）
+### 5.1 现状边界模型：`ServiceLandscape`（core 新包 `com.monogomicro.core.audit`）
 
 ```java
 /** 现状架构视图：服务 → 类集合。与 PartitionResult 完全独立的概念。 */
@@ -84,8 +84,8 @@ public final class ServiceLandscape {
 **构建来源**（`LandscapeFactory`）：
 
 - 默认：按 `ClassInfo.mavenModule` 聚合，module 名即服务名（**注意命名来自目录推导**，嵌套布局带路径前缀）
-- 启发式：module 名命中 `common|shared|api|client|dto`（可配）→ 标记 `shared=true`（§5.2.0 口径用）
-- 覆盖：可选 `services.json` 声明式映射（**v2 契约**：modules 匹配支持**精确名 / 目录推文名 / 前缀通配**三种写法，按 `moduleNameOf` 实际产出命名对齐；另加 `exclude`）：
+- 启发式：module 名命中 `common|shared|api|client|dto`（可配）→ 标记 `shared=true`（§5.2 口径用）
+- 覆盖：可选 `services.json` 声明式映射（**v2 契约**：modules 匹配支持**精确名 / 目录推导名 / 前缀通配**三种写法，按 `moduleNameOf` 实际产出命名对齐；另加 `exclude`）：
 
 ```json
 {
@@ -99,7 +99,7 @@ public final class ServiceLandscape {
 
 JSON 契约版本化（复用 JsonIO 盖章机制）。未在 services.json 出现且未被 exclude 的 module 默认自成服务。
 
-### 5.2.0 指标语义（v2 核心修正，来自评审 §1）
+### 5.2 指标语义（v2 核心修正，来自评审 §1）
 
 **单体拆分与微服务体检的指标语义根本不同**：单体场景每条类间边都是潜在 RPC，crossRatio 近似拆分后网络通信成本；微服务 monorepo 场景跨 module 边绝大多数是**编译期依赖**——对 common 库类的依赖运行时是打进每个服务 jar 的**同进程方法调用**（不是 RPC），对 `*-api`/`*-client` 模块的依赖可能是 Feign 接口声明（RPC）也可能只是 DTO 引用（非 RPC）。
 
@@ -108,13 +108,13 @@ JSON 契约版本化（复用 JsonIO 盖章机制）。未在 services.json 出�
 - 主指标命名 **boundaryCoupling（边界耦合率）**——报告措辞为"边界耦合/违规率"，**不得**表述为"跨服务通信占比"
 - **shared 服务剔除**（定论，原 Q2）：理由不是"对齐 kernel 口径"，而是**这些边本来就不是跨进程调用**；同时输出一个含 shared 的辅助口径（成本近零，仅供参照）
 - **modularity**：`LouvainPartitioner.modularity(sym, 现状labels)`（shared 类剔除后）
-- **每服务 fanIn/fanOut**：基于 `DependencyGraph.outEdges` 的**原始有向图**一遍扫边聚合（A 依赖 B 记 A 的出边、B 的入边）——**不复用** `buildResult` 的对称图 `/2` 口径（§5.4）
+- **每服务 fanIn/fanOut**：基于 `DependencyGraph.outEdges` 的**原始有向图**一遍扫边聚合（A 依赖 B 记 A 的出边、B 的入边）——**不复用** `buildResult` 的对称图 `/2` 口径（§5.6）
 - **服务内部权重**：两端同服务的边权和（原始图）
 - **imbalance**：服务规模 max/min 与标准差/均值两个口径
 
 后续增强（不阻塞首版，记录）：对 `*-api`/`*-client` 模块中 Feign 接口的依赖单独计数，作为"真实 RPC 边"的下界估计。
 
-### 5.2.2 六类反模式（阈值固定 + `--config` 覆盖 + 报告自带生效阈值；分位数自适应不做，定论 Q1）
+### 5.3 六类反模式（阈值固定 + `--config` 覆盖 + 报告自带生效阈值；分位数自适应不做，定论 Q1）
 
 | # | 反模式 | 判定（默认；公式为唯一口径） | 输出 |
 |---|---|---|---|
@@ -131,12 +131,12 @@ JSON 契约版本化（复用 JsonIO 盖章机制）。未在 services.json 出�
 - `warning`：上帝服务、该合并对、错位类普通子类；共享库滥用中扇入 = 全部业务服务
 - `info`：哑服务；共享库滥用其余；其余观察项
 
-### 5.2.3 报告模型（`AuditReport`）
+### 5.4 报告模型（`AuditReport`）
 
 `{ formatVersion, generatedAt, summary(指标，含双口径), services[], findings[], config(生效阈值) }`；
 **findings 稳定 id**（定论 Q9）：`type + 服务名 + 关键类集合的短 hash`（如 `misplaced:com.x.SysUserServiceImpl:a3f2`）——为后续沙盘引用与执行器预留锚点。
 
-### 5.3 `RefactoringAdvisor`——优化建议
+### 5.5 `RefactoringAdvisor`——优化建议
 
 输入 `DependencyGraph + ServiceLandscape`：
 
@@ -147,14 +147,14 @@ JSON 契约版本化（复用 JsonIO 盖章机制）。未在 services.json 出�
 
 措辞定位：参考分区是**参照物不是真理**，报告显式声明。
 
-### 5.4 现有代码的安全重构点（v2 改写，共两处，均有对拍）
+### 5.6 现有代码的安全重构点（v2 改写，共两处，均有对拍）
 
 | 改动 | 内容 | 行为保证 |
 |---|---|---|
 | `PartitionMetrics` 加重载 | `of(DependencyGraph, Map<String,Integer> labels)`（kernel=-1 约定）；旧签名保留并委托新路径 | 新增对拍测试：旧路径结果逐位一致 |
 | `buildResult` 统计**部分**下沉（v2 收窄范围） | 只下沉**口径无关**的统计：imbalance、useCaseSpan；fanIn/fanOut/intra **不下沉**（buildResult 基于融合对称图 `/2` 口径，与 audit 的原始有向图口径语义不同，强行共享会埋坑） | RuoYi 基线快照对拍（Q/服务数/每服务规模逐位一致）；audit 指标在 audit 包内基于原始图独立实现 |
 
-### 5.5 入口层
+### 5.7 入口层
 
 **CLI**（照 `PartitionCommand` 风格新增子命令）：
 
@@ -206,7 +206,7 @@ m2m audit -a <analysis.json> [-s services.json] [--suggest] [--config 阈值覆�
 | Q1 阈值 | 固定默认 + `--config` 覆盖 + 报告自带生效阈值；分位数不做 |
 | Q2 shared 口径 | 剔除（理由：编译期依赖非跨进程调用）；附含 shared 辅助口径 |
 | Q3 delta 过滤 | 变差的建议输出并标 warning，不自动过滤 |
-| Q4 services.json | 加 `exclude`（glob）；module 匹配对齐目录推文名（精确/前缀/通配） |
+| Q4 services.json | 加 `exclude`（glob）；module 匹配对齐目录推导名（精确/前缀/通配） |
 | Q5 继承错位 | 独立高 severity 子类 finding，不做加权 |
 | Q6 MCP 状态 | 首版仅 ANALYZED；PARTITIONED 复用列后续增强 |
 | Q7 参考分区参数 | `maxServices = max(12, 现状服务数 × 1.5)` + 固定 seed + 报告注明 |
