@@ -106,7 +106,7 @@ public class DependencyGraph {
         adjacency.values().forEach(m -> m.values().forEach(consumer));
     }
 
-    /** 对称化权重：a-b 之间的无向权重 = max(有向权重和, 最小值保证连通性) */
+    /** 对称化权重：a-b 之间的无向权重 = 双向权重之和（供 Louvain/退火/模度消费） */
     public Map<String, Map<String, Long>> symmetrized() {
         Map<String, Map<String, Long>> sym = new LinkedHashMap<>();
         for (String n : nodes.keySet()) {

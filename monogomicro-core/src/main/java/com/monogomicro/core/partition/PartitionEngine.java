@@ -339,39 +339,13 @@ public class PartitionEngine {
         }
         metrics.setPerCommunity(stats);
 
-        double mean = labels.size() / (double) k;
-        double variance = 0;
-        for (List<String> members : byCommunity.values()) {
-            variance += (members.size() - mean) * (members.size() - mean);
-        }
-        variance /= Math.max(1, k);
-        metrics.setImbalance(mean == 0 ? 0 : Math.sqrt(variance) / mean);
+        // 失衡度与用例跨度：口径无关统计已下沉至 PartitionMetrics（audit 复用），逻辑与遍历序原样保留
+        metrics.setImbalance(PartitionMetrics.imbalance(byCommunity));
 
-        List<PartitionResult.UseCaseSpan> spans = new ArrayList<>();
         if (!useCases.isEmpty()) {
-            double sum = 0;
-            int counted = 0;
-            for (UseCase uc : useCases) {
-                Set<Integer> touched = new HashSet<>();
-                for (String cls : uc.getClasses()) {
-                    Integer c = finalLabels.get(cls);
-                    if (c != null) {
-                        touched.add(c);
-                    }
-                }
-                if (touched.isEmpty()) {
-                    continue;
-                }
-                PartitionResult.UseCaseSpan span = new PartitionResult.UseCaseSpan();
-                span.setName(uc.getName());
-                span.setSpan(touched.size());
-                span.setCommunities(new ArrayList<>(touched));
-                spans.add(span);
-                sum += touched.size();
-                counted++;
-            }
-            metrics.setAvgUseCaseSpan(counted == 0 ? 0 : sum / counted);
-            metrics.setUseCaseSpans(spans);
+            PartitionMetrics.UseCaseSpans spans = PartitionMetrics.useCaseSpans(finalLabels, useCases);
+            metrics.setAvgUseCaseSpan(spans.avg());
+            metrics.setUseCaseSpans(spans.spans());
         }
         result.setMetrics(metrics);
         return result;
