@@ -1,0 +1,147 @@
+{
+  "formatVersion" : 1,
+  "alpha" : 0.5,
+  "beta" : 0.5,
+  "modularity" : 0.7668238146123224,
+  "kernelClasses" : [ "com.ruoyi.common.core.domain.BaseEntity", "com.ruoyi.common.core.domain.entity.SysUser", "com.ruoyi.common.utils.StringUtils", "com.ruoyi.common.core.text.Convert", "com.ruoyi.common.core.domain.AjaxResult", "com.ruoyi.common.core.controller.BaseController", "com.ruoyi.common.constant.Constants" ],
+  "communities" : [ {
+    "id" : 0,
+    "name" : "job-service",
+    "classes" : [ "com.ruoyi.quartz.service.ISysJobLogService", "com.ruoyi.quartz.util.CronUtils", "com.ruoyi.common.utils.bean.BeanUtils", "com.ruoyi.quartz.util.JobInvokeUtil", "com.ruoyi.common.utils.ExceptionUtil", "com.ruoyi.quartz.mapper.SysJobLogMapper", "com.ruoyi.quartz.controller.SysJobLogController", "com.ruoyi.quartz.service.ISysJobService", "com.ruoyi.quartz.controller.SysJobController", "com.ruoyi.quartz.service.impl.SysJobServiceImpl", "com.ruoyi.quartz.domain.SysJobLog", "com.ruoyi.quartz.util.QuartzJobExecution", "com.ruoyi.quartz.mapper.SysJobMapper", "com.ruoyi.quartz.service.impl.SysJobLogServiceImpl", "com.ruoyi.quartz.util.QuartzDisallowConcurrentExecution", "com.ruoyi.quartz.util.ScheduleUtils", "com.ruoyi.common.exception.job.TaskException", "com.ruoyi.common.constant.ScheduleConstants", "com.ruoyi.quartz.domain.SysJob", "com.ruoyi.quartz.util.AbstractQuartzJob" ]
+  }, {
+    "id" : 1,
+    "name" : "file-service",
+    "classes" : [ "com.ruoyi.common.utils.uuid.IdUtils", "com.ruoyi.common.config.RuoYiConfig", "com.ruoyi.common.utils.file.FileUploadUtils", "com.ruoyi.common.utils.file.ImageUtils", "com.ruoyi.common.utils.uuid.UUID", "com.ruoyi.common.exception.file.InvalidExtensionException", "com.ruoyi.web.controller.common.CommonController", "com.ruoyi.common.config.ServerConfig", "com.ruoyi.common.exception.file.FileUploadException", "com.ruoyi.common.utils.file.FileUtils", "com.ruoyi.common.utils.uuid.Seq", "com.ruoyi.web.core.config.SwaggerConfig", "com.ruoyi.common.utils.file.MimeTypeUtils" ]
+  }, {
+    "id" : 2,
+    "name" : "exception-service",
+    "classes" : [ "com.ruoyi.common.exception.base.BaseException", "com.ruoyi.common.exception.user.RoleBlockedException", "com.ruoyi.common.exception.user.UserPasswordRetryLimitCountException", "com.ruoyi.common.exception.file.FileNameLengthLimitExceededException", "com.ruoyi.common.exception.user.UserBlockedException", "com.ruoyi.framework.shiro.realm.UserRealm", "com.ruoyi.common.exception.user.UserNotExistsException", "com.ruoyi.common.exception.file.FileSizeLimitExceededException", "com.ruoyi.common.exception.file.FileException", "com.ruoyi.common.exception.user.UserException", "com.ruoyi.common.exception.user.UserDeleteException", "com.ruoyi.common.exception.user.BlackListException", "com.ruoyi.common.exception.user.CaptchaException", "com.ruoyi.common.exception.user.UserPasswordRetryLimitExceedException" ]
+  }, {
+    "id" : 3,
+    "name" : "online-service",
+    "classes" : [ "com.ruoyi.framework.shiro.session.OnlineSessionFactory", "com.ruoyi.framework.shiro.web.filter.sync.SyncOnlineSessionFilter", "com.ruoyi.system.service.ISysUserOnlineService", "com.ruoyi.framework.shiro.session.OnlineSessionDAO", "com.ruoyi.common.utils.http.UserAgentUtils", "com.ruoyi.system.service.impl.SysUserOnlineServiceImpl", "com.ruoyi.common.core.session.OnlineSession", "com.ruoyi.common.enums.OnlineStatus", "com.ruoyi.framework.shiro.web.filter.online.OnlineSessionFilter", "com.ruoyi.system.domain.SysUserOnline", "com.ruoyi.framework.shiro.web.session.OnlineWebSessionManager", "com.ruoyi.system.mapper.SysUserOnlineMapper", "com.ruoyi.web.controller.monitor.SysUserOnlineController", "com.ruoyi.framework.shiro.service.SysShiroService" ]
+  }, {
+    "id" : 4,
+    "name" : "role-service",
+    "classes" : [ "com.ruoyi.system.service.impl.SysRoleServiceImpl", "com.ruoyi.framework.aspectj.DataScopeAspect", "com.ruoyi.common.annotation.DataScope", "com.ruoyi.system.mapper.SysRoleMapper", "com.ruoyi.system.domain.SysRoleDept", "com.ruoyi.common.core.context.PermissionContextHolder", "com.ruoyi.system.mapper.SysRoleMenuMapper", "com.ruoyi.common.core.domain.entity.SysRole", "com.ruoyi.framework.aspectj.PermissionsAspect", "com.ruoyi.system.service.ISysRoleService", "com.ruoyi.system.mapper.SysRoleDeptMapper", "com.ruoyi.system.domain.SysRoleMenu", "com.ruoyi.web.controller.system.SysRoleController" ]
+  }, {
+    "id" : 5,
+    "name" : "table-service",
+    "classes" : [ "com.ruoyi.generator.service.IGenTableColumnService", "com.ruoyi.generator.controller.GenController", "com.ruoyi.generator.util.VelocityInitializer", "com.ruoyi.framework.web.exception.GlobalExceptionHandler", "com.ruoyi.common.exception.DemoModeException", "com.ruoyi.generator.domain.GenTable", "com.ruoyi.generator.service.IGenTableService", "com.ruoyi.generator.util.GenUtils", "com.ruoyi.generator.mapper.GenTableMapper", "com.ruoyi.generator.config.GenConfig", "com.ruoyi.common.json.JSON", "com.ruoyi.web.controller.demo.controller.UserFormModel", "com.ruoyi.web.controller.demo.controller.DemoFormController", "com.ruoyi.common.core.domain.CxSelect", "com.ruoyi.generator.mapper.GenTableColumnMapper", "com.ruoyi.generator.domain.GenTableColumn", "com.ruoyi.common.constant.GenConstants", "com.ruoyi.generator.util.VelocityUtils", "com.ruoyi.common.exception.ServiceException", "com.ruoyi.generator.service.impl.GenTableColumnServiceImpl", "com.ruoyi.generator.service.impl.GenTableServiceImpl", "com.ruoyi.common.json.JSONObject", "com.ruoyi.common.core.text.CharsetKit" ]
+  }, {
+    "id" : 6,
+    "name" : "user-service",
+    "classes" : [ "com.ruoyi.system.service.impl.SysUserServiceImpl", "com.ruoyi.system.mapper.SysUserPostMapper", "com.ruoyi.system.mapper.SysUserRoleMapper", "com.ruoyi.common.utils.html.EscapeUtil", "com.ruoyi.common.utils.html.HTMLFilter", "com.ruoyi.system.domain.SysUserRole", "com.ruoyi.framework.config.FilterConfig", "com.ruoyi.system.mapper.SysUserMapper", "com.ruoyi.common.xss.XssHttpServletRequestWrapper", "com.ruoyi.common.utils.security.Md5Utils", "com.ruoyi.system.domain.SysUserPost", "com.ruoyi.common.xss.XssFilter", "com.ruoyi.common.utils.bean.BeanValidators" ]
+  }, {
+    "id" : 7,
+    "name" : "filter-service",
+    "classes" : [ "com.ruoyi.framework.shiro.web.filter.captcha.CaptchaValidateFilter", "com.ruoyi.common.annotation.Anonymous", "com.ruoyi.framework.config.properties.PermitAllUrlProperties", "com.ruoyi.framework.shiro.web.filter.kickout.KickoutSessionFilter", "com.ruoyi.framework.shiro.web.session.SpringSessionValidationScheduler", "com.ruoyi.framework.config.ShiroConfig", "com.ruoyi.common.utils.security.CipherUtils", "com.ruoyi.common.constant.ShiroConstants", "com.ruoyi.common.utils.Threads", "com.ruoyi.common.config.thread.ThreadPoolConfig", "com.ruoyi.framework.manager.ShutdownManager", "com.ruoyi.framework.shiro.web.filter.csrf.CsrfValidateFilter", "com.ruoyi.framework.shiro.web.CustomShiroFilterFactoryBean" ]
+  }, {
+    "id" : 8,
+    "name" : "dict-service",
+    "classes" : [ "com.ruoyi.common.utils.MapDataUtil", "com.ruoyi.framework.web.domain.Server", "com.ruoyi.system.service.ISysDictTypeService", "com.ruoyi.system.service.impl.SysDictDataServiceImpl", "com.ruoyi.framework.web.domain.server.SysFile", "com.ruoyi.framework.web.domain.server.Sys", "com.ruoyi.framework.aspectj.LogAspect", "com.ruoyi.common.exception.GlobalException", "com.ruoyi.framework.web.domain.server.Jvm", "com.ruoyi.web.controller.tool.TestController", "com.ruoyi.common.exception.UtilException", "com.ruoyi.common.annotation.Excels", "com.ruoyi.common.core.domain.entity.SysDictType", "com.ruoyi.framework.web.service.DictService", "com.ruoyi.web.controller.demo.controller.DemoReportController", "com.ruoyi.common.utils.Arith", "com.ruoyi.web.controller.demo.controller.DemoOperateController", "com.ruoyi.common.utils.poi.ExcelSheet", "com.ruoyi.web.controller.demo.controller.DemoDialogController", "com.ruoyi.web.controller.demo.controller.UserTableColumn", "com.ruoyi.system.mapper.SysOperLogMapper", "com.ruoyi.common.core.text.StrFormatter", "com.ruoyi.web.controller.tool.SwaggerController", "com.ruoyi.system.service.impl.SysLogininforServiceImpl", "com.ruoyi.common.core.page.TableSupport", "com.ruoyi.system.domain.SysLogininfor", "com.ruoyi.common.core.page.TableDataInfo", "com.ruoyi.common.core.domain.TreeEntity", "com.ruoyi.framework.config.ApplicationConfig", "com.ruoyi.common.utils.file.FileTypeUtils", "com.ruoyi.system.service.ISysDictDataService", "com.ruoyi.web.controller.monitor.SysOperlogController", "com.ruoyi.system.mapper.SysDictTypeMapper", "com.ruoyi.common.utils.PageUtils", "com.ruoyi.web.controller.demo.controller.DocumentModel", "com.ruoyi.web.controller.demo.domain.CustomerModel", "com.ruoyi.framework.web.domain.server.Mem", "com.ruoyi.web.controller.monitor.ServerController", "com.ruoyi.common.utils.poi.ExcelHandlerAdapter", "com.ruoyi.RuoYiServletInitializer", "com.ruoyi.web.controller.demo.domain.GoodsModel", "com.ruoyi.web.controller.demo.controller.UserTableModel", "com.ruoyi.common.core.domain.entity.SysDictData", "com.ruoyi.common.core.domain.R", "com.ruoyi.framework.web.domain.server.Cpu", "com.ruoyi.system.service.impl.SysDictTypeServiceImpl", "com.ruoyi.web.controller.demo.controller.DemoTableController", "com.ruoyi.web.controller.demo.controller.AreaModel", "com.ruoyi.web.controller.demo.controller.DemoIconController", "com.ruoyi.common.utils.reflect.ReflectUtils", "com.ruoyi.framework.config.MyBatisConfig", "com.ruoyi.framework.config.I18nConfig", "com.ruoyi.common.utils.poi.ExcelUtil", "com.ruoyi.web.controller.system.SysCaptchaController", "com.ruoyi.web.controller.system.SysDictTypeController", "com.ruoyi.system.service.impl.SysOperLogServiceImpl", "com.ruoyi.quartz.task.RyTask", "com.ruoyi.RuoYiApplication", "com.ruoyi.common.utils.sql.SqlUtil", "com.ruoyi.framework.config.KaptchaTextCreator", "com.ruoyi.system.mapper.SysDictDataMapper", "com.ruoyi.framework.web.service.PermissionService", "com.ruoyi.system.mapper.SysLogininforMapper", "com.ruoyi.common.core.page.PageDomain", "com.ruoyi.system.service.ISysOperLogService", "com.ruoyi.common.annotation.Excel", "com.ruoyi.common.utils.DictUtils", "com.ruoyi.framework.config.CaptchaConfig", "com.ruoyi.system.domain.SysOperLog", "com.ruoyi.web.controller.demo.domain.UserOperateModel", "com.ruoyi.web.controller.tool.BuildController", "com.ruoyi.common.enums.BusinessStatus", "com.ruoyi.web.controller.tool.UserEntity", "com.ruoyi.web.controller.monitor.DruidController", "com.ruoyi.common.utils.DateUtils", "com.ruoyi.web.controller.system.SysDictDataController" ]
+  }, {
+    "id" : 9,
+    "name" : "notice-service",
+    "classes" : [ "com.ruoyi.system.service.ISysNoticeService", "com.ruoyi.system.service.impl.SysDeptServiceImpl", "com.ruoyi.system.service.ISysDeptService", "com.ruoyi.common.annotation.Log", "com.ruoyi.system.service.ISysNoticeReadService", "com.ruoyi.common.core.domain.entity.SysDept", "com.ruoyi.system.service.ISysLogininforService", "com.ruoyi.web.controller.system.SysUserController", "com.ruoyi.common.xss.Xss", "com.ruoyi.system.service.ISysMenuService", "com.ruoyi.system.mapper.SysDeptMapper", "com.ruoyi.common.enums.OperatorType", "com.ruoyi.common.xss.XssValidator", "com.ruoyi.common.annotation.Sensitive", "com.ruoyi.common.core.domain.Ztree", "com.ruoyi.system.mapper.SysNoticeMapper", "com.ruoyi.system.service.impl.SysPostServiceImpl", "com.ruoyi.web.controller.system.SysPostController", "com.ruoyi.system.domain.SysNotice", "com.ruoyi.system.service.impl.SysNoticeReadServiceImpl", "com.ruoyi.web.controller.system.SysMenuController", "com.ruoyi.system.domain.SysPost", "com.ruoyi.system.mapper.SysNoticeReadMapper", "com.ruoyi.system.mapper.SysPostMapper", "com.ruoyi.web.controller.system.SysProfileController", "com.ruoyi.web.controller.system.SysNoticeController", "com.ruoyi.web.controller.monitor.SysLogininforController", "com.ruoyi.common.core.domain.entity.SysMenu", "com.ruoyi.common.enums.BusinessType", "com.ruoyi.system.service.ISysUserService", "com.ruoyi.common.utils.DesensitizedUtil", "com.ruoyi.system.service.impl.SysNoticeServiceImpl", "com.ruoyi.common.enums.DesensitizedType", "com.ruoyi.system.mapper.SysMenuMapper", "com.ruoyi.common.utils.ShiroUtils", "com.ruoyi.system.service.impl.SysMenuServiceImpl", "com.ruoyi.system.domain.SysNoticeRead", "com.ruoyi.common.config.serializer.SensitiveJsonSerializer", "com.ruoyi.web.controller.system.SysDeptController", "com.ruoyi.framework.shiro.util.AuthorizationUtils", "com.ruoyi.system.service.ISysPostService" ]
+  }, {
+    "id" : 10,
+    "name" : "source-service",
+    "classes" : [ "com.ruoyi.common.enums.DataSourceType", "com.ruoyi.common.utils.security.PermissionUtils", "com.ruoyi.common.exception.user.UserPasswordNotMatchException", "com.ruoyi.common.utils.spring.SpringUtils", "com.ruoyi.common.utils.LogUtils", "com.ruoyi.framework.aspectj.DataSourceAspect", "com.ruoyi.framework.manager.factory.AsyncFactory", "com.ruoyi.common.utils.AddressUtils", "com.ruoyi.framework.shiro.service.SysLoginService", "com.ruoyi.framework.shiro.web.filter.LogoutFilter", "com.ruoyi.framework.config.properties.DruidProperties", "com.ruoyi.framework.shiro.rememberMe.CustomCookieRememberMeManager", "com.ruoyi.common.utils.MessageUtils", "com.ruoyi.framework.shiro.service.SysRegisterService", "com.ruoyi.common.enums.UserStatus", "com.ruoyi.framework.manager.AsyncManager", "com.ruoyi.common.constant.PermissionConstants", "com.ruoyi.common.constant.UserConstants", "com.ruoyi.common.utils.http.HttpUtils", "com.ruoyi.common.annotation.DataSource", "com.ruoyi.framework.config.DruidConfig", "com.ruoyi.framework.datasource.DynamicDataSource", "com.ruoyi.common.config.datasource.DynamicDataSourceContextHolder", "com.ruoyi.common.utils.IpUtils", "com.ruoyi.framework.shiro.service.SysPasswordService" ]
+  }, {
+    "id" : 11,
+    "name" : "config-service",
+    "classes" : [ "com.ruoyi.web.controller.monitor.CacheController", "com.ruoyi.common.utils.ServletUtils", "com.ruoyi.framework.interceptor.RepeatSubmitInterceptor", "com.ruoyi.system.mapper.SysConfigMapper", "com.ruoyi.web.controller.system.SysRegisterController", "com.ruoyi.web.controller.system.SysLoginController", "com.ruoyi.framework.web.service.CacheService", "com.ruoyi.system.domain.SysConfig", "com.ruoyi.web.controller.system.SysConfigController", "com.ruoyi.framework.web.service.ConfigService", "com.ruoyi.system.service.ISysConfigService", "com.ruoyi.common.annotation.RepeatSubmit", "com.ruoyi.common.utils.CacheUtils", "com.ruoyi.framework.interceptor.impl.SameUrlDataInterceptor", "com.ruoyi.framework.config.ResourcesConfig", "com.ruoyi.web.controller.system.SysIndexController", "com.ruoyi.system.service.impl.SysConfigServiceImpl", "com.ruoyi.common.utils.CookieUtils" ]
+  } ],
+  "metrics" : {
+    "crossRatio" : 0.19749045280960176,
+    "avgUseCaseSpan" : 0.0,
+    "imbalance" : 0.747473028630138,
+    "perCommunity" : [ {
+      "id" : 0,
+      "name" : "job-service",
+      "size" : 20,
+      "intraWeight" : 2182,
+      "fanIn" : 252,
+      "fanOut" : 252
+    }, {
+      "id" : 1,
+      "name" : "file-service",
+      "size" : 13,
+      "intraWeight" : 604,
+      "fanIn" : 188,
+      "fanOut" : 188
+    }, {
+      "id" : 2,
+      "name" : "exception-service",
+      "size" : 14,
+      "intraWeight" : 357,
+      "fanIn" : 165,
+      "fanOut" : 165
+    }, {
+      "id" : 3,
+      "name" : "online-service",
+      "size" : 14,
+      "intraWeight" : 1107,
+      "fanIn" : 324,
+      "fanOut" : 324
+    }, {
+      "id" : 4,
+      "name" : "role-service",
+      "size" : 13,
+      "intraWeight" : 1356,
+      "fanIn" : 556,
+      "fanOut" : 556
+    }, {
+      "id" : 5,
+      "name" : "table-service",
+      "size" : 23,
+      "intraWeight" : 3711,
+      "fanIn" : 274,
+      "fanOut" : 274
+    }, {
+      "id" : 6,
+      "name" : "user-service",
+      "size" : 13,
+      "intraWeight" : 560,
+      "fanIn" : 281,
+      "fanOut" : 281
+    }, {
+      "id" : 7,
+      "name" : "filter-service",
+      "size" : 13,
+      "intraWeight" : 395,
+      "fanIn" : 269,
+      "fanOut" : 269
+    }, {
+      "id" : 8,
+      "name" : "dict-service",
+      "size" : 76,
+      "intraWeight" : 6683,
+      "fanIn" : 965,
+      "fanOut" : 965
+    }, {
+      "id" : 9,
+      "name" : "notice-service",
+      "size" : 41,
+      "intraWeight" : 5002,
+      "fanIn" : 1363,
+      "fanOut" : 1363
+    }, {
+      "id" : 10,
+      "name" : "source-service",
+      "size" : 25,
+      "intraWeight" : 1652,
+      "fanIn" : 1057,
+      "fanOut" : 1057
+    }, {
+      "id" : 11,
+      "name" : "config-service",
+      "size" : 18,
+      "intraWeight" : 1398,
+      "fanIn" : 457,
+      "fanOut" : 457
+    } ],
+    "useCaseSpans" : [ ]
+  }
+}
