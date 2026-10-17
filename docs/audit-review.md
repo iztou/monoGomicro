@@ -73,3 +73,60 @@
 6. findings 模型加稳定 id + severity 分档规则；
 7. §4/§6 测试数量勘误为 42 单测 + 4 IT = 46；
 8. （后续项记录）Feign 接口依赖单独计数、PARTITIONED 下 landscape 复用。
+
+
+---
+
+# 附：阶段 0-5 实施复核（Kimi，2026-10-17 15:52，HEAD=0a94679 develop）
+
+复核方式：不采信提交声明，独立重跑——全量构建、旧代码（e9c92f6）worktree 重建对拍、CLI 冒烟、新增代码逐文件评审。
+
+## A. 独立核实通过
+
+| 验证项 | 结果 |
+|---|---|
+| 全量构建 | `mvn verify` BUILD SUCCESS，70 单测 + 4 IT 全绿（core 43 = 旧 15 + audit 25 + PartitionMetrics 对拍 3；codegen 3+1IT；mcp 24+3IT） |
+| 行为保持铁律（§4） | 旧代码 e9c92f6 检出独立 worktree 重建，同一输入跑 partition：**旧/新代码输出逐字节一致**（Q=0.7651972625483001，12 社区全同）——铁律实质达成 |
+| 基线对拍声明 | zcode 的 after 运行（/tmp/m2m-after）与冻结基线 `docs/audit-baseline/ruoyi-partition-before.json` **全字段逐字节一致**，"byte-identical" 声明属实 |
+| 现有代码改动面 | 仅 `PartitionMetrics` 重载 + `buildResult` 两处下沉（imbalance/useCaseSpans）+ `DependencyGraph` 注释修正；既有测试仅两处 IT 工具数断言 15→17（预期内） |
+| 下沉等价性 | `imbalance`/`useCaseSpans` 逐行比对：遍历序与语义保留；`c != null && c >= 0` 与原 `c != null` 在 buildResult 上下文等价（finalLabels 无 -1） |
+| CLI/MCP 冒烟 | `m2m audit -a <ruoyi analysis> --suggest` 实跑：misplaced 精准命中 framework→system 真实耦合（ConfigService/DictService/AsyncFactory），沙盘 delta 非零（阶段 5 修复有效），worsened 标注正常 |
+| 设计还原度 | v2 §6 前置清单 8 条全部落地；severity 分档、稳定 id、双口径、maxServices 适配、seed 固定并注明均符合设计 |
+| 实施主动性 | mergePair 取等号（纯互指上限 0.5）、hollowService 加 in>0 前置、沙盘目标对齐现状服务（否则 delta 恒零）——三个实施中发现并修复的都是真问题 |
+
+## B. 发现的问题（按严重度）
+
+### B1. 模度口径 bug：shared 幻影社区【建议阶段 6 前修】
+
+`ArchitectureAuditor.audit` 把含 `-1` 的 `mainLabels` 直接传给 `PartitionMetrics.of(graph, labels, kernelSize, views)` 重载，该重载将此 map **原样**传给 `LouvainPartitioner.modularity`。`modularity` 的相等判定（`ci.equals(labels.get(j))`）使所有 shared 类共享标签 -1 而被视为**同一个幻影社区**：shared 类之间的边被计为社区内部边，Q 被抬高（RuoYi 冒烟值 0.3558 含此水分）。设计 §5.2.1 要求"shared 类剔除后计算"。
+
+- 原 `of(graph, partition)` 路径无此问题（先过滤 -1 再算模度），分区主流程不受影响；
+- `RefactoringAdvisor.snapshotOf` 同样受影响：沙盘 before/after 同口径，delta 相对比较仍有效，但绝对值偏离设计；
+- **修法**（一行级）：算模度前过滤掉 -1 项——与 kernel 语义对齐（kernel 类留在图中但不进 labels）。注意保持 crossRatio 部分行为不变。
+
+### B2. `--config` 阈值覆盖入口缺失【设计偏差，随阶段 6/7 收尾】
+
+v2 §5.5 CLI 签名含 `[--config 阈值覆盖]`，Q1 定论写明"固定默认 + `--config` 可覆盖"。实现中 `AuditConfig` 具备完整 setter 与 `describe()`，但 CLI 与 MCP 均未暴露读取阈值配置的入口——当前实为纯固定阈值。补 CLI `--config <audit-config.json>`（JsonIO 读入即可，AuditConfig 已有 `@JsonIgnoreProperties(ignoreUnknown=true)`）；MCP 可选加 `configPath` 入参。
+
+### B3. MCP 提示语指向不存在的文件【一行文案，随手修】
+
+`McpTools.auditArchitecture` 返回的 note 称"完整报告（含每服务统计与生效阈值）见 audit.json"，但 MCP 路径从不写 audit.json（那是 CLI 行为）。改为返回完整 findings 分页指引，或改为"每服务统计与生效阈值见 summary/config 字段"并确实带出。
+
+### B4. 基线未锚定输入，长期回归价值脆弱【流程建议】
+
+复核中发现：15:05 重新 analyze RuoYi 所得图与 11:50 冻结基线时的图有 **47 条边权重漂移**（totalWeight 5901→5984，疑与 mvn 本地仓库解析状态随时间变化有关），导致"仓库 + 默认命令"无法复现基线。zcode 当时的对拍为真（输入一致），但基线作为长期回归 oracle 脆弱。建议：
+
+1. 把生成基线所用的 `analysis.json` 一并冻结进 `docs/audit-baseline/`；
+2. 对拍流程改为"以冻结的 analysis.json 为输入跑 partition，diff 输出"——真正隔离"重构是否改变分区行为"，不受 analyze 输入漂移干扰；
+3. 在 baseline 目录附 README 记录生成命令与环境。
+
+### B5. 文档同步小尾巴【随阶段 6/7 收尾】
+
+- mergePair 实现取等号（`bidirectional >= ratio × minFlow`）、hollowService 加 `in > 0` 前置——两处修正均合理（AGENTS.md 有记录），但 `audit-design.md` §5.2.2 公式与 `AuditConfig` 注释仍写 `>`，请回写；
+- `findingId` 实现为 `finding:<6位hex>`（不透明），设计示例为 `misplaced:com.x.SysUserServiceImpl:a3f2`（可读）。稳定性满足，建议把 type 前缀纳入 id 以保留可读性（`type:hash` 即可）；
+- `RefactoringAdvisor.labelOf` 为 O(社区×类) 逐类扫描，整体 O(N²)——290 类无感，万级类仓库会钝；建议构建一次 fqcn→community 索引；
+- 结构审视建议只覆盖"未配对的现状服务"，设计 §5.3 中"未配对的参考社区"的合并/吸收建议未显式产出（实际以"新建服务承接移动类群"形式部分体现）——确认是否为有意简化，若是请在设计文档注明。
+
+## C. 结论
+
+**阶段 0-5 批准**，质量高于预期（实施中主动暴露并修复三个真问题）。阶段 6 开始前请先修 B1（影响报告主指标之一的口径）与 B3；B2/B4/B5 随阶段 6/7 一并收尾。

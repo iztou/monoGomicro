@@ -221,6 +221,13 @@ public final class RefactoringAdvisor {
         for (PartitionResult.Community c : reference.getCommunities()) {
             refName.put(c.getId(), c.getName());
         }
+        // fqcn → 参考社区 索引（O(1) 查询；逐社区 contains 是 O(社区×类)）
+        Map<String, Integer> refLabel = new HashMap<>();
+        for (PartitionResult.Community c : reference.getCommunities()) {
+            for (String fqcn : c.getClasses()) {
+                refLabel.put(fqcn, c.getId());
+            }
+        }
 
         Advice advice = new Advice();
         advice.getReferencePartition().put("maxServices", maxServices);
@@ -276,7 +283,7 @@ public final class RefactoringAdvisor {
             ServiceLandscape.Service own = business.stream()
                     .filter(s -> s.name().equals(svc)).findFirst().orElseThrow();
             for (String fqcn : own.fqcns()) {
-                Integer target = labelOf(reference, fqcn);
+                Integer target = refLabel.get(fqcn);
                 if (target != null && target != community && !refSet.contains(fqcn)) {
                     moveOut.computeIfAbsent(target, k -> new ArrayList<>()).add(fqcn);
                 }
@@ -379,15 +386,6 @@ public final class RefactoringAdvisor {
             }
         }
         return PartitionMetrics.of(graph, labels, 0, List.of());
-    }
-
-    private static Integer labelOf(PartitionResult result, String fqcn) {
-        for (PartitionResult.Community c : result.getCommunities()) {
-            if (c.getClasses().contains(fqcn)) {
-                return c.getId();
-            }
-        }
-        return null; // kernel
     }
 
     /** 剔除 shared 类后的子图（参考分区输入）。 */

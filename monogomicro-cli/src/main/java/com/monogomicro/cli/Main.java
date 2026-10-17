@@ -183,6 +183,10 @@ public final class Main implements Callable<Integer> {
                 description = "可选 services.json：修正按 Maven module 自动推导的服务边界（合并/重命名/shared/排除）")
         Path services;
 
+        @CommandLine.Option(names = {"-c", "--config"},
+                description = "可选 audit-config.json：覆盖反模式阈值（字段同 AuditConfig，如 misplacedMargin）")
+        Path config;
+
         @CommandLine.Option(names = "--suggest", defaultValue = "false",
                 description = "附加优化建议（现状 vs 参考分区对比 + 沙盘指标 delta）")
         boolean suggest;
@@ -203,8 +207,12 @@ public final class Main implements Callable<Integer> {
                     com.monogomicro.core.audit.LandscapeFactory.from(report, cfg);
             DependencyGraph graph = report.toGraph();
 
+            com.monogomicro.core.audit.AuditConfig auditConfig = new com.monogomicro.core.audit.AuditConfig();
+            if (config != null) {
+                auditConfig = JsonIO.read(config, com.monogomicro.core.audit.AuditConfig.class);
+            }
             com.monogomicro.core.audit.AuditReport auditReport =
-                    com.monogomicro.core.audit.ArchitectureAuditor.audit(graph, landscape);
+                    com.monogomicro.core.audit.ArchitectureAuditor.audit(graph, landscape, auditConfig);
             auditReport.write(out.resolve("audit.json"));
             com.monogomicro.core.audit.AuditReporter.report(System.out, auditReport);
             System.out.println("已写入 " + out.resolve("audit.json").toAbsolutePath());

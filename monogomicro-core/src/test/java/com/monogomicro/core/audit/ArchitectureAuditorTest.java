@@ -83,7 +83,7 @@ class ArchitectureAuditorTest {
         assertEquals(1, cycles.size());
         assertEquals("critical", cycles.get(0).getSeverity());
         assertEquals(3, cycles.get(0).getServices().size());
-        assertTrue(cycles.get(0).getId().startsWith("finding:"));
+        assertTrue(cycles.get(0).getId().startsWith("serviceCycle:"));
     }
 
     @Test
@@ -159,6 +159,21 @@ class ArchitectureAuditorTest {
         assertEquals(Boolean.TRUE, misplaced.get(0).getMetrics().get("inheritance"));
         assertEquals(f.cls("svcA", 2), misplaced.get(0).getClasses().get(0));
         assertEquals("warning", misplaced.get(1).getSeverity());
+    }
+
+    @Test
+    void sharedPhantomCommunityDoesNotInflateModularity() {
+        // B1 回归：shared 类间的边不得计入任何社区内聚（-1 若进 modularity 会成幻影社区抬高 Q）
+        Fixture base = new Fixture().svc("svcA", 3).svc("svcB", 3)
+                .edge("svcA", 0, "svcB", 0, 1);
+        Fixture withSharedEdges = new Fixture().svc("svcA", 3).svc("svcB", 3).svc("common", 3, true)
+                .edge("svcA", 0, "svcB", 0, 1)
+                .edge("common", 0, "common", 1, 50)   // shared 间重边：不得影响模度
+                .edge("svcA", 1, "common", 1, 5);     // 业务→shared 边：同样不得影响模度
+        AuditReport r1 = ArchitectureAuditor.audit(base.graph, base.landscape());
+        AuditReport r2 = ArchitectureAuditor.audit(withSharedEdges.graph, withSharedEdges.landscape());
+        // 两图的业务标签完全相同 → 模度必须一致（shared 边被剔除）
+        assertEquals(r1.getSummary().getModularity(), r2.getSummary().getModularity(), 1e-9);
     }
 
     @Test

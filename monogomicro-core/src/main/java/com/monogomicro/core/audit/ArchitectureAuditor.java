@@ -443,20 +443,19 @@ public final class ArchitectureAuditor {
 
     // ---------- 工具 ----------
 
-    /** 稳定 id：type + 服务名 + 关键类集合 的 SHA-256 前 6 位 hex。 */
+    /** 稳定 id：type 前缀 + 服务名/关键类集合 的 SHA-256 短 hash（可读 + 可引用）。 */
     private static String findingId(AuditReport.Finding f) {
-        String material = f.getType() + "|" + String.join(",", f.getServices())
-                + "|" + String.join(",", f.getClasses());
+        String material = String.join(",", f.getServices()) + "|" + String.join(",", f.getClasses());
         try {
             byte[] d = MessageDigest.getInstance("SHA-256").digest(material.getBytes(StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder("finding:");
+            StringBuilder sb = new StringBuilder(f.getType()).append(':');
             for (int i = 0; i < 3; i++) {
                 sb.append(String.format("%02x", d[i]));
             }
             return sb.toString();
         } catch (Exception e) {
             // SHA-256 必存在；退化路径保证不因 id 中断体检
-            return "finding:" + Integer.toHexString(material.hashCode());
+            return f.getType() + ":" + Integer.toHexString(material.hashCode());
         }
     }
 

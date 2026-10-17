@@ -78,7 +78,15 @@ public final class PartitionMetrics {
             }
         }
         double crossRatio = total == 0 ? 0 : (double) cross / total;
-        double modularity = LouvainPartitioner.modularity(graph.symmetrized(), serviceLabels);
+        // 模度只计服务类：-1（kernel/shared）若留在 labels 会被 modularity 视为同一幻影社区，
+        // shared 间的边计入社区内聚而抬高 Q——kernel 语义 = 留在图中但不进标签
+        Map<String, Integer> serviceOnly = new HashMap<>();
+        serviceLabels.forEach((fqcn, c) -> {
+            if (c >= 0) {
+                serviceOnly.put(fqcn, c);
+            }
+        });
+        double modularity = LouvainPartitioner.modularity(graph.symmetrized(), serviceOnly);
         return new Snapshot(crossRatio, modularity, kernelSize, communities);
     }
 

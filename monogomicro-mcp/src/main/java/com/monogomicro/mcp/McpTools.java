@@ -444,8 +444,10 @@ final class McpTools {
             }
             out.put("findings", findings);
             out.put("findingCount", findings.size());
-            out.put("note", "完整报告（含每服务统计与生效阈值）见 audit.json；"
-                    + "boundaryCoupling 是边界耦合率（编译期依赖口径），不是跨服务通信占比");
+            out.put("config", report.getConfig());
+            out.put("note", "boundaryCoupling 是边界耦合率（编译期依赖口径，剔除 shared），"
+                    + "不是跨服务通信占比；生效阈值见 config 字段。需要落盘完整报告时用 CLI："
+                    + "m2m audit -a <analysis.json> -o <目录>");
             return out;
         });
     }
