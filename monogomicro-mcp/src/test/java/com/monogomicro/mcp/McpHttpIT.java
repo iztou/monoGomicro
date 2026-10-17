@@ -96,7 +96,7 @@ class McpHttpIT {
 
         // 3. tools/list：与 stdio 同一套注册，15 个工具（SSE 响应，取 data: 行）
         JsonNode tools = parse(post("127.0.0.1:" + port, jsonRpc("tools/list", "{}")));
-        assertEquals(15, tools.path("result").path("tools").size());
+        assertEquals(17, tools.path("result").path("tools").size());
 
         // 4. 业务调用（空会话）：工具级错误可恢复返回，验证状态机链路在 HTTP 会话上同样成立
         JsonNode summary = parse(post("127.0.0.1:" + port, jsonRpc("tools/call",

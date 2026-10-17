@@ -106,7 +106,7 @@ class McpServerIT {
         Map<String, Object> tools = call("tools/list", Map.of());
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> toolList = (List<Map<String, Object>>) ((Map<?, ?>) tools.get("result")).get("tools");
-        assertEquals(15, toolList.size());
+        assertEquals(17, toolList.size());
         assertTrue(toolList.stream().allMatch(t -> t.get("annotations") != null), "每个工具都应带 annotations");
 
         Map<String, Object> resources = call("resources/list", Map.of());

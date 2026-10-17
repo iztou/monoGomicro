@@ -2,6 +2,12 @@ package com.monogomicro.mcp;
 
 import com.monogomicro.codegen.GenerationResult;
 import com.monogomicro.core.M2mException;
+import com.monogomicro.core.audit.ArchitectureAuditor;
+import com.monogomicro.core.audit.AuditReport;
+import com.monogomicro.core.audit.LandscapeFactory;
+import com.monogomicro.core.audit.RefactoringAdvisor;
+import com.monogomicro.core.audit.ServiceLandscape;
+import com.monogomicro.core.audit.ServicesConfig;
 import com.monogomicro.core.graph.DependencyGraph;
 import com.monogomicro.core.model.AnalysisReport;
 import com.monogomicro.core.model.ClassInfo;
@@ -404,6 +410,108 @@ final class McpTools {
             out.put("doc", "generate 落盘时同步写入输出目录的 MIGRATION.md");
             return out;
         });
+    }
+
+    // ---------- 架构体检层（只读，ANALYZED 即可用，与分区状态机解耦） ----------
+
+    /** audit_architecture：现状边界指标 + 六类反模式。 */
+    Map<String, Object> auditArchitecture(Path servicesPath) {
+        return session.read(() -> {
+            requireLoadedView();
+            ServiceLandscape landscape = LandscapeFactory.from(session.report(), readServices(servicesPath));
+            AuditReport report = ArchitectureAuditor.audit(session.graph(), landscape);
+
+            Map<String, Object> out = new LinkedHashMap<>();
+            AuditReport.MetricsSummary s = report.getSummary();
+            out.put("summary", orderedMap(
+                    "businessServices", s.getBusinessServiceCount(),
+                    "sharedServices", s.getSharedServiceCount(),
+                    "classes", s.getClassCount(),
+                    "boundaryCoupling", round4(s.getBoundaryCoupling()),
+                    "boundaryCouplingInclShared", round4(s.getBoundaryCouplingInclShared()),
+                    "modularity", round4(s.getModularity())));
+            List<Map<String, Object>> findings = new ArrayList<>();
+            for (AuditReport.Finding f : report.getFindings()) {
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("id", f.getId());
+                item.put("type", f.getType());
+                item.put("severity", f.getSeverity());
+                item.put("services", f.getServices());
+                item.put("classes", f.getClasses().size() > 3
+                        ? f.getClasses().subList(0, 3) : f.getClasses());
+                item.put("detail", f.getDetail());
+                findings.add(item);
+            }
+            out.put("findings", findings);
+            out.put("findingCount", findings.size());
+            out.put("note", "完整报告（含每服务统计与生效阈值）见 audit.json；"
+                    + "boundaryCoupling 是边界耦合率（编译期依赖口径），不是跨服务通信占比");
+            return out;
+        });
+    }
+
+    /** suggest_refactoring：现状 vs 参考分区 → 移动类群（沙盘 delta）+ 结构审视。 */
+    Map<String, Object> suggestRefactoring(Path servicesPath) {
+        return session.read(() -> {
+            requireLoadedView();
+            ServiceLandscape landscape = LandscapeFactory.from(session.report(), readServices(servicesPath));
+            RefactoringAdvisor.Advice advice = RefactoringAdvisor.advise(session.graph(), landscape);
+
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("referencePartition", advice.getReferencePartition());
+            List<Map<String, Object>> moves = new ArrayList<>();
+            for (RefactoringAdvisor.MoveSuggestion m : advice.getMoves()) {
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("from", m.getFrom());
+                item.put("to", m.getTo());
+                item.put("classes", m.getClasses().size() > 10
+                        ? m.getClasses().subList(0, 10) : m.getClasses());
+                item.put("classCount", m.getClasses().size());
+                item.put("boundaryCoupling", orderedMap(
+                        "before", round4(m.getBoundaryCouplingBefore()),
+                        "after", round4(m.getBoundaryCouplingAfter())));
+                item.put("modularity", orderedMap(
+                        "before", round4(m.getModularityBefore()),
+                        "after", round4(m.getModularityAfter())));
+                item.put("worsened", m.isWorsened());
+                moves.add(item);
+            }
+            out.put("moves", moves);
+            List<Map<String, Object>> structures = new ArrayList<>();
+            for (RefactoringAdvisor.StructureSuggestion st : advice.getStructures()) {
+                structures.add(orderedMap(
+                        "kind", st.getKind(), "service", st.getService(),
+                        "overlap", st.getOverlap(), "detail", st.getDetail()));
+            }
+            out.put("structures", structures);
+            out.put("disclaimer", advice.getDisclaimer());
+            return out;
+        });
+    }
+
+    /** ANALYZED 或 PARTITIONED 均可（体检只依赖 report/graph，与分区状态机解耦）。 */
+    private void requireLoadedView() {
+        if (session.state() == WorkspaceSession.State.EMPTY) {
+            throw new M2mException("E_NO_ANALYSIS", "会话中尚无分析结果",
+                    "先调用 analyze_project 或 load_workspace");
+        }
+    }
+
+    private ServicesConfig readServices(Path servicesPath) {
+        if (servicesPath == null) {
+            return null;
+        }
+        if (!java.nio.file.Files.isRegularFile(servicesPath)) {
+            throw new M2mException("E_SERVICES_NOT_FOUND", "services.json 不存在：" + servicesPath,
+                    "检查路径；不传此参数则按 Maven module 自动推导服务边界");
+        }
+        try {
+            ServicesConfig cfg = JsonIO.read(servicesPath, ServicesConfig.class);
+            cfg.validate();
+            return cfg;
+        } catch (IOException e) {
+            throw new M2mException("E_BAD_SERVICES_JSON", "services.json 解析失败：" + e.getMessage(), null);
+        }
     }
 
     // ---------- 内部 ----------

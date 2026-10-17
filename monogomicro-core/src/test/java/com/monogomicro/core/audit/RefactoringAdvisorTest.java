@@ -81,6 +81,12 @@ class RefactoringAdvisorTest {
         assertTrue(top.getClasses().contains("com.t.b0"), "B0（A 簇强连接）应在移动建议里");
         // 沙盘 delta 数值合法
         assertTrue(top.getBoundaryCouplingAfter() >= 0 && top.getModularityAfter() >= 0);
+        // 沙盘机制本身必须产生变化：B0 与 A 簇有 5×7 强边，移回 A 后耦合必降或模度必升
+        // （RuoYi 冒烟中出现 delta 全零的建议，那些是与原服务零边的自包含类群——数学正确的
+        // 中性移动；此断言保证"有边场景下沙盘真的在算"）
+        assertTrue(top.getBoundaryCouplingAfter() < top.getBoundaryCouplingBefore()
+                        || top.getModularityAfter() > top.getModularityBefore(),
+                "沙盘 delta 不可全零：B0 与 A 簇存在强边，移动必然改变指标");
         assertFalse(top.isWorsened(), "把错放簇移回应变好（worsened=false）");
         // 元信息与免责声明
         assertEquals(42L, ((Number) advice.getReferencePartition().get("seed")).longValue());

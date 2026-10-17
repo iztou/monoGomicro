@@ -22,7 +22,7 @@ import java.util.concurrent.Callable;
         versionProvider = Main.VersionProvider.class,
         description = "monoGomicro：Java 单体应用微服务拆分建议工具（Mono2Micro 复刻）",
         subcommands = {Main.AnalyzeCommand.class, Main.PartitionCommand.class,
-                Main.TraceCommand.class, Main.GenerateCommand.class})
+                Main.TraceCommand.class, Main.GenerateCommand.class, Main.AuditCommand.class})
 public final class Main implements Callable<Integer> {
 
     /** 版本号读 jar manifest 的 Implementation-Version（Maven ${project.version} 注入）。 */
@@ -166,6 +166,67 @@ public final class Main implements Callable<Integer> {
             for (UseCase uc : useCases) {
                 System.out.printf("  %s：%d 个类 / %d 条调用边%n",
                         uc.getName(), uc.getClasses().size(), uc.getEdgeWeights().size());
+            }
+            return 0;
+        }
+    }
+
+    @Command(name = "audit", description = "微服务架构体检：现状边界指标 + 反模式检测（--suggest 附优化建议）",
+            mixinStandardHelpOptions = true)
+    public static class AuditCommand implements Callable<Integer> {
+
+        @CommandLine.Option(names = {"-a", "--analysis"}, required = true,
+                description = "analysis.json 路径（微服务 monorepo 跑 m2m analyze 产出）")
+        Path analysis;
+
+        @CommandLine.Option(names = {"-s", "--services"},
+                description = "可选 services.json：修正按 Maven module 自动推导的服务边界（合并/重命名/shared/排除）")
+        Path services;
+
+        @CommandLine.Option(names = "--suggest", defaultValue = "false",
+                description = "附加优化建议（现状 vs 参考分区对比 + 沙盘指标 delta）")
+        boolean suggest;
+
+        @CommandLine.Option(names = {"-o", "--out"}, defaultValue = "m2m-out",
+                description = "输出目录（audit.json / suggestions.json 写到这里）")
+        Path out;
+
+        @Override
+        public Integer call() throws Exception {
+            AnalysisReport report = JsonIO.read(analysis, AnalysisReport.class);
+            com.monogomicro.core.audit.ServicesConfig cfg = null;
+            if (services != null) {
+                cfg = JsonIO.read(services, com.monogomicro.core.audit.ServicesConfig.class);
+                cfg.validate();
+            }
+            com.monogomicro.core.audit.ServiceLandscape landscape =
+                    com.monogomicro.core.audit.LandscapeFactory.from(report, cfg);
+            DependencyGraph graph = report.toGraph();
+
+            com.monogomicro.core.audit.AuditReport auditReport =
+                    com.monogomicro.core.audit.ArchitectureAuditor.audit(graph, landscape);
+            auditReport.write(out.resolve("audit.json"));
+            com.monogomicro.core.audit.AuditReporter.report(System.out, auditReport);
+            System.out.println("已写入 " + out.resolve("audit.json").toAbsolutePath());
+
+            if (suggest) {
+                com.monogomicro.core.audit.RefactoringAdvisor.Advice advice =
+                        com.monogomicro.core.audit.RefactoringAdvisor.advise(graph, landscape);
+                JsonIO.write(advice, out.resolve("suggestions.json"));
+                System.out.printf("优化建议：%d 条移动类群 / %d 条结构审视（参考分区 %s 个服务，seed=%s）%n",
+                        advice.getMoves().size(), advice.getStructures().size(),
+                        advice.getReferencePartition().get("serviceCount"),
+                        advice.getReferencePartition().get("seed"));
+                advice.getMoves().stream().limit(5).forEach(m ->
+                        System.out.printf("  %s → %s（%d 类，耦合 %.4f→%.4f 模度 %.4f→%.4f%s）%n",
+                                m.getFrom(), m.getTo(), m.getClasses().size(),
+                                m.getBoundaryCouplingBefore(), m.getBoundaryCouplingAfter(),
+                                m.getModularityBefore(), m.getModularityAfter(),
+                                m.isWorsened() ? "，沙盘变差（warning）" : ""));
+                advice.getStructures().forEach(st ->
+                        System.out.printf("  [%s] %s：%s%n", st.getKind(), st.getService(), st.getDetail()));
+                System.out.println("已写入 " + out.resolve("suggestions.json").toAbsolutePath());
+                System.out.println("提示：" + advice.getDisclaimer());
             }
             return 0;
         }

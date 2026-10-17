@@ -358,6 +358,29 @@ public final class McpServerMain {
                 true,
                         (exchange, progressToken, args) -> tools.migrationItems()));
 
+        specs.add(tool("audit_architecture",
+                "微服务架构体检：现状服务边界（默认按 Maven module 聚合，可选 services.json 修正）→ "
+                        + "边界耦合率/模度等指标 + 六类反模式（服务环/上帝服务/该合并对/哑服务/共享库滥用/归属错位类）。"
+                        + "前置：analyze_project 或 load_workspace。",
+                Map.of("type", "object",
+                        "properties", Map.of(
+                                "servicesPath", Map.of("type", "string",
+                                        "description", "可选 services.json 路径（修正自动推导的边界：合并/重命名/shared/排除）")),
+                        "required", List.of()),
+                true,
+                        (exchange, progressToken, args) -> tools.auditArchitecture(pathOpt(args, "servicesPath"))));
+
+        specs.add(tool("suggest_refactoring",
+                "优化建议：现状边界 vs 参考分区对比 → 移动类群建议（每条附沙盘指标 delta，变差标 warning 不自动过滤）"
+                        + "+ 结构审视（拆分/合并）。参考分区是参照物不是真理。前置同 audit_architecture。",
+                Map.of("type", "object",
+                        "properties", Map.of(
+                                "servicesPath", Map.of("type", "string",
+                                        "description", "可选 services.json 路径")),
+                        "required", List.of()),
+                true,
+                        (exchange, progressToken, args) -> tools.suggestRefactoring(pathOpt(args, "servicesPath"))));
+
         return specs.toArray(new McpServerFeatures.SyncToolSpecification[0]);
     }
 

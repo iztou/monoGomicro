@@ -263,6 +263,10 @@ public final class RefactoringAdvisor {
         }
 
         // ---- 移动类群建议（沙盘 delta 在 landscape 副本上推演）----
+        // 目标解析：参考社区对齐了某现状服务 → 移到该服务（边才可能变内部，delta 有意义）；
+        // 未对齐社区（现状缺这个服务）→ 以参考社区名新建服务承接
+        Map<Integer, String> communityToSvc = new HashMap<>();
+        aligned.forEach((svcName, comm) -> communityToSvc.put(comm, svcName));
         for (Map.Entry<String, Integer> e : aligned.entrySet()) {
             String svc = e.getKey();
             int community = e.getValue();
@@ -278,7 +282,8 @@ public final class RefactoringAdvisor {
                 }
             }
             for (Map.Entry<Integer, List<String>> m : moveOut.entrySet()) {
-                String to = refName.getOrDefault(m.getKey(), "community-" + m.getKey());
+                String to = communityToSvc.getOrDefault(m.getKey(),
+                        refName.getOrDefault(m.getKey(), "community-" + m.getKey()));
                 advice.getMoves().add(simulateMove(graph, landscape, svc, to, m.getValue(), m.getKey()));
             }
         }
