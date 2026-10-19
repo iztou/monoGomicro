@@ -143,12 +143,13 @@ public class MicroserviceGenerator {
         }
     }
 
-    /** 客户端类（com.ruoyi.client.*）收敛到 common：同名去重，服务目录副本删除 */
-    private void consolidateClientsToCommon(Path outDir) throws IOException {
+    /** 客户端类（&lt;basePackage&gt;.client.*）收敛到 common：同名去重，服务目录副本删除 */
+    private void consolidateClientsToCommon(Path outDir, String basePackage) throws IOException {
+        String clientDirSegment = "/src/main/java/" + basePackage.replace('.', '/') + "/client/";
         java.util.Map<String, Path> byName = new java.util.LinkedHashMap<>();
         List<Path> copies = new ArrayList<>();
         try (var walk = Files.walk(outDir, 8)) {
-            walk.filter(p -> p.toString().contains("/src/main/java/com/ruoyi/client/")
+            walk.filter(p -> p.toString().contains(clientDirSegment)
                             && p.toString().endsWith(".java"))
                 .forEach(p -> {
                     String svcDir = p.subpath(outDir.getNameCount(), outDir.getNameCount() + 1).toString();
@@ -162,7 +163,7 @@ public class MicroserviceGenerator {
         for (Path copy : copies) {
             Path existing = byName.get(copy.getFileName().toString());
             if (existing == null) {
-                Path target = outDir.resolve("common/src/main/java/com/ruoyi/client")
+                Path target = outDir.resolve("common" + clientDirSegment)
                         .resolve(copy.getFileName().toString());
                 Files.createDirectories(target.getParent());
                 Files.move(copy, target);
@@ -344,7 +345,7 @@ public class MicroserviceGenerator {
 
         // 5.5 生成的 RPC 客户端统一收敛到 common（去重）——common 里的类也可能引用客户端，
         //     且同名客户端会随多个消费服务重复生成，必须只保留一份
-        consolidateClientsToCommon(outDir);
+        consolidateClientsToCommon(outDir, basePackage);
 
         // 4. 每个服务：Application + application.yml + pom
         int port = 8081;
@@ -440,9 +441,19 @@ public class MicroserviceGenerator {
             if (owner == null) {
                 continue;
             }
-            // 目标路径：resources 下从 mapper/ 开始的相对路径
-            String rel = projectDir.relativize(xml).toString()
-                    .replaceFirst("^[^/]+/src/main/resources/", "");
+            // 目标路径：resources 下从 mapper/ 开始的相对路径。
+            // 不用正则剥「模块名/src/main/resources/」前缀——单模块项目没有该前缀会剥错；
+            // 直接定位路径中最后一个 mapper 段取其后相对路径（入口过滤已保证路径含 /mapper/）
+            Path rel = null;
+            for (int i = xml.getNameCount() - 2; i >= 0; i--) {
+                if ("mapper".equals(xml.getName(i).toString())) {
+                    rel = xml.subpath(i, xml.getNameCount());
+                    break;
+                }
+            }
+            if (rel == null) {
+                continue;
+            }
             Path target = outDir.resolve(owner).resolve("src/main/resources").resolve(rel);
             Files.createDirectories(target.getParent());
             Files.copy(xml, target);
@@ -694,16 +705,14 @@ public class MicroserviceGenerator {
         StringBuilder sb = new StringBuilder();
         sb.append("server:\n  port: ").append(port).append("\n");
         sb.append("spring:\n  application:\n    name: ").append(dir).append("\n");
-        // 客户端统一在 common，组件扫描会实例化所有客户端，因此每个服务都要有全部对端地址
+        // 客户端统一在 common，组件扫描会实例化所有客户端，因此每个服务都要有全部对端地址。
+        // 自己也不能跳过：本服务的 client bean 同样引用 ${svc.<自己>.base-url} 占位符，
+        // 缺了会直接启动失败（Could not resolve placeholder）；指向自己的地址不会被调用，无害
         StringBuilder svcSection = new StringBuilder();
-        int idx = 0;
         for (PartitionResult.Community c : partition.getCommunities()) {
             String tag = serviceTag(c.getName(), c.getId());
-            if (idx != port - 8081) { // 跳过自己
-                svcSection.append("  ").append(tag).append(":\n    base-url: http://localhost:")
-                        .append(portOfTag(tag)).append("\n");
-            }
-            idx++;
+            svcSection.append("  ").append(tag).append(":\n    base-url: http://localhost:")
+                    .append(portOfTag(tag)).append("\n");
         }
         if (svcSection.length() > 0) {
             sb.append("svc:\n").append(svcSection);

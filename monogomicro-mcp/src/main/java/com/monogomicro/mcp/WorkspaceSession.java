@@ -210,6 +210,7 @@ final class WorkspaceSession {
             options.setMinCommunitySize(minSize);
             options.setMaxServices(maxServices);
             options.setSeed(seed);
+            options.validate();
             this.partition = new PartitionEngine(graph, useCases, options).run();
             rebuildServiceIndex();
             this.state = State.PARTITIONED;

@@ -17,6 +17,7 @@ public class ConsoleState {
     private AnalysisReport report;
     private DependencyGraph graph;
     private PartitionResult partition;
+    private java.nio.file.Path saveRoot; // load 时记录：/api/save 只允许写到该目录树内（R-04）
     private final Map<String, Integer> labels = new LinkedHashMap<>(); // fqcn -> 社区 id（-1 = 内核）
     private final Map<String, String> sourcePaths = new HashMap<>();
 
@@ -48,11 +49,18 @@ public class ConsoleState {
     public PartitionResult partition() { return partition; }
     public Map<String, Integer> labels() { return labels; }
     public String sourcePath(String fqcn) { return sourcePaths.get(fqcn); }
+    public java.nio.file.Path saveRoot() { return saveRoot; }
+    public void saveRoot(java.nio.file.Path saveRoot) { this.saveRoot = saveRoot; }
 
-    /** 调整后回写分区对象（重算指标在控制器里做） */
+    /** 调整后回写分区对象（重算指标在控制器里做）。先校验、后改状态（R-13：
+     *  先改后验会把类从所有社区删掉再抛错，labels 指向不存在的 id，状态不一致） */
     public void move(String fqcn, int targetCommunity) {
         if (!labels.containsKey(fqcn)) {
             throw new IllegalArgumentException("未知类: " + fqcn);
+        }
+        if (targetCommunity != -1 && partition.getCommunities().stream()
+                .noneMatch(c -> c.getId() == targetCommunity)) {
+            throw new IllegalArgumentException("未知社区: " + targetCommunity);
         }
         labels.put(fqcn, targetCommunity);
         partition.getCommunities().forEach(c -> c.getClasses().remove(fqcn));
@@ -69,6 +77,5 @@ public class ConsoleState {
                 return;
             }
         }
-        throw new IllegalArgumentException("未知社区: " + targetCommunity);
     }
 }

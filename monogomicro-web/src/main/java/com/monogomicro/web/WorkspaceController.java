@@ -65,6 +65,9 @@ public class WorkspaceController {
                     report.toGraph(), List.of(), new com.monogomicro.core.model.PartitionOptions()).run();
         }
         state.load(report, partition);
+        // 保存根：analysis 文件所在目录（/api/save 只允许写到该目录树内，防止任意路径写）
+        Path analysisDir = Path.of(req.analysisPath()).toAbsolutePath().normalize().getParent();
+        state.saveRoot(analysisDir != null ? analysisDir : Path.of("").toAbsolutePath().normalize());
         return state();
     }
 
@@ -124,11 +127,20 @@ public class WorkspaceController {
         return ResponseEntity.ok(metrics());
     }
 
-    /** 保存当前分区到 partition.json */
+    /** 保存当前分区到 partition.json。目标路径必须落在 load 时 analysis 文件所在目录树内（R-04） */
     @PostMapping("/api/save")
     public ResponseEntity<?> save(@RequestParam String path) throws Exception {
-        JsonIO.write(state.partition(), Path.of(path));
-        return ResponseEntity.ok(Map.of("saved", path));
+        if (!state.isLoaded()) {
+            return ResponseEntity.status(409).body(Map.of("error", "尚未载入数据"));
+        }
+        Path target = Path.of(path).toAbsolutePath().normalize();
+        Path saveRoot = state.saveRoot();
+        if (saveRoot == null || !target.startsWith(saveRoot)) {
+            return ResponseEntity.badRequest().body(Map.of("error",
+                    "保存路径必须位于已载入 analysis 文件所在目录内: " + saveRoot));
+        }
+        JsonIO.write(state.partition(), target);
+        return ResponseEntity.ok(Map.of("saved", target.toString()));
     }
 
     public record GenerateRequest(String projectDir, String outDir, Boolean overwrite) {}

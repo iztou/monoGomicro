@@ -69,7 +69,7 @@ java -jar monogomicro-cli/target/m2m.jar analyze /path/to/monolith -p com.your.p
 java -jar monogomicro-cli/target/m2m.jar partition -a m2m-out/analysis.json -o m2m-out
 
 # 3.（可选）运行时采集：启动你的应用
-java -javaagent:monogomicro-agent/target/monogomicro-agent-0.2.0.jar=\
+java -javaagent:monogomicro-agent/target/monogomicro-agent-0.3.0.jar=\
 out=/tmp/trace.log,include=com.your.pkg.,entry=DispatcherServlet -jar app.jar
 #    然后带轨迹重新分区：
 java -jar monogomicro-cli/target/m2m.jar partition -a m2m-out/analysis.json -t /tmp/trace.log -o m2m-out
@@ -112,11 +112,11 @@ java -jar monogomicro-mcp/target/m2m-mcp.jar --http --port 8082   # 默认 127.0
 `--host <本机内网 IP>` 显式绑定（如 `--host 192.168.1.10`）；绑 `0.0.0.0` 反而会让
 内网客户端因 Host 头不匹配被 403 拒绝。
 
-工具一览（15 个）：`analyze_project` / `load_workspace` / `ingest_trace` / `compute_partition` /
+工具一览（17 个）：`analyze_project` / `load_workspace` / `ingest_trace` / `compute_partition` /
 `generate_services`（默认 dry-run）/ `save_partition`（流水线）；`get_partition_summary` /
 `list_classes` / `get_class_info` / `find_classes` / `get_metrics` / `get_migration_items`
 （观察，渐进式披露，单工具返回 ≤4KB）；`move_class`（返回指标 delta）/ `rename_service` /
-`undo`（编辑）。另有资源 `m2m://analysis`、`m2m://partition` 供客户端按需拉取大对象。
+`undo`（编辑）；`audit_architecture` / `suggest_refactoring`（架构体检，只读）。另有资源 `m2m://analysis`、`m2m://partition` 供客户端按需拉取大对象。
 错误统一结构化（`{code, message, hint}`，拼错类名/服务 id 附相近候选）；写路径限制在 workspace 根内；
 `analyze_project` 支持进度通知（客户端传 `_meta.progressToken` 即每 50 个源文件收到进度）。
 设计文档见 `docs/mcp-design.md`；契约测试（真子进程 stdio + HTTP 两条传输的 JSON-RPC 全链路）随 `mvn verify` 运行。
@@ -141,6 +141,8 @@ npx @modelcontextprotocol/inspector java -jar monogomicro-mcp/target/m2m-mcp.jar
 >         建议撤销：`undo` 已恢复，指标回落。
 
 ## 架构体检（面向已有微服务）
+
+> 需要 **0.3.0**（撰稿时 Maven Central / Homebrew 尚未发布，渠道上是 0.2.0）——请从源码构建使用。
 
 `m2m audit` 体检一个**已经是微服务**的工程（Maven 多模块 monorepo）。服务边界默认按
 Maven module 自动推导（可选 `services.json` 修正）；报告含指标——**边界耦合率**
@@ -195,7 +197,9 @@ RuoYi-Cloud 实测（274 类 / 16 模块）：边界耦合率 **0.0000**——�
 
 ## 测试
 
-`mvn test`：Louvain 双簇恢复、单社区、空图；轨迹解析（单线程用例切分、多线程交织）。
+`mvn verify` 跑全量：单测（core 分析/分区/体检、codegen、MCP 会话与工具）+ 集成测试——
+codegen 真实生成、install 并启动两个服务、HTTP 断言 RPC 桥贯通；MCP 双传输（stdio/HTTP）
+真子进程契约测试；agent IT 真实 fork JVM 断言轨迹含用例入口。
 
 ## 许可证
 

@@ -2,6 +2,22 @@ package com.monogomicro.core.model;
 
 /** 分区参数。 */
 public class PartitionOptions {
+
+    /** 范围校验（R-12）：非法参数不该静默产出无意义分区，统一 E_BAD_PARAMS。 */
+    public void validate() {
+        if (Double.isNaN(alpha) || Double.isNaN(beta) || alpha < 0 || alpha > 1 || beta < 0 || beta > 1) {
+            throw new com.monogomicro.core.M2mException("E_BAD_PARAMS",
+                    "alpha/beta 必须在 [0,1] 内，当前 alpha=" + alpha + ", beta=" + beta, null);
+        }
+        if (minCommunitySize < 1) {
+            throw new com.monogomicro.core.M2mException("E_BAD_PARAMS",
+                    "minCommunitySize 必须 >= 1，当前 " + minCommunitySize, null);
+        }
+        if (maxServices < 1) {
+            throw new com.monogomicro.core.M2mException("E_BAD_PARAMS",
+                    "maxServices 必须 >= 1，当前 " + maxServices, null);
+        }
+    }
     /** 静态图权重占比 */
     private double alpha = 0.5;
     /** 动态图权重占比 */

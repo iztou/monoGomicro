@@ -67,9 +67,10 @@ class GeneratedServicesRpcIT {
         Path out = work.resolve("services");
         new MicroserviceGenerator(report, partition, work.resolve("mono")).generate(out);
 
-        // 产物结构：消费端镜像 Client + 提供端 RpcController + 空 common 只有 pom
+        // 产物结构：RPC 客户端收敛到 common（R-09 修复后按 basePackage 收敛，不再只对 RuoYi 生效）
+        // + 提供端 RpcController + common 有 pom
         assertTrue(Files.isRegularFile(out.resolve(
-                "svc-consumer/src/main/java/com/demo/client/IProviderServiceClientImpl.java")));
+                "common/src/main/java/com/demo/client/IProviderServiceClientImpl.java")));
         assertTrue(Files.isRegularFile(out.resolve(
                 "svc-provider/src/main/java/com/demo/rpc/IProviderServiceRpcController.java")));
         assertTrue(Files.isRegularFile(out.resolve("common/pom.xml")));
@@ -307,7 +308,7 @@ class GeneratedServicesRpcIT {
             Thread.sleep(500);
         }
         throw new AssertionError("服务 " + port + " 在 " + timeoutSeconds + "s 内未就绪。server 日志：\n"
-                + tail(serverLogs, 3000));
+                + tail(serverLogs, 12000));
     }
 
     private static String httpGet(int port, String path) throws Exception {

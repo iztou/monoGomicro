@@ -30,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 /**
  * HTTP 传输契约测试（failsafe，package 后运行）：真实子进程
  * {@code java -jar target/m2m-mcp.jar --http --port <free>} 走 MCP Streamable HTTP 完整生命周期——
- * initialize（捕获 Mcp-Session-Id）→ initialized 通知（202）→ tools/list（15 工具）→
+ * initialize（捕获 Mcp-Session-Id）→ initialized 通知（202）→ tools/list（17 工具）→
  * 业务调用（空会话 E_NO_PARTITION 错误链路）→ 伪造 Host 头拒绝（DNS rebinding 防护）。
  * 与 {@link McpServerIT}（stdio）互补：同一套工具注册，两条传输各自锁一遍协议层。
  *
@@ -94,7 +94,7 @@ class McpHttpIT {
         // 2. initialized 通知（无 id 无响应体）——Streamable HTTP 约定 202 Accepted
         assertEquals(202, post("127.0.0.1:" + port, jsonRpc("notifications/initialized", null)).status());
 
-        // 3. tools/list：与 stdio 同一套注册，15 个工具（SSE 响应，取 data: 行）
+        // 3. tools/list：与 stdio 同一套注册，17 个工具（SSE 响应，取 data: 行）
         JsonNode tools = parse(post("127.0.0.1:" + port, jsonRpc("tools/list", "{}")));
         assertEquals(17, tools.path("result").path("tools").size());
 

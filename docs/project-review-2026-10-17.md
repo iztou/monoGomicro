@@ -997,35 +997,46 @@ labels {a:0, b:1} -> objective 0.5
 
 | 条目 | 智谱结论 | Kimi 结论 | 最终决定 |
 |---|---|---|---|
-| R-01 |  |  |  |
-| R-02 |  |  |  |
-| R-03 |  |  |  |
-| R-04 |  |  |  |
-| R-05 |  |  |  |
-| R-06 |  |  |  |
-| R-07 |  |  |  |
-| R-08 |  |  |  |
-| R-09 |  |  |  |
-| R-10 |  |  |  |
-| R-11 |  |  |  |
-| R-12 |  |  |  |
-| R-13 |  |  |  |
-| R-14 |  |  |  |
-| R-15 |  |  |  |
-| R-16 |  |  |  |
-| R-17 |  |  |  |
+| R-01 |  | 成立（P0）。修复核验通过：校验前置 + cwd/项目根/祖先守卫 + CLI/web 显式 overwrite |  |
+| R-02 |  | 成立（P1）。修复方向正确（独立 AgentBuilder，JDK 17 手工实测 E/N/X 正常）；**但新增 AgentEntryIT 在本机默认 Maven（JDK 27）下红**——fixture 默认编译为 class v69，ByteBuddy 1.15.10 解析不了、Listener.NoOp 静默吞错。IT 编译需加 `--release 17`；另见新增发现 N-01 |  |
+| R-03 |  | 成立（P1）。紧凑 mapper + McpHttpIT 严格单行断言，修复正确 |  |
+| R-04 |  | 成立（P1）。localhost 绑定 + 前端 esc + overwrite 显式化已修；`/api/save` `/api/generate` 的 workspace 路径校验未做——**部分修复** |  |
+| R-05 |  | 成立（P1）。根 POM 固定 `projectDir/pom.xml` + 直接子元素取值 + parent 回退，修复正确 |  |
+| R-06 |  | 成立（P2）。k==0→0，JSON 契约保持 number |  |
+| R-07 |  | 成立（P2）。tag 冲突追加社区 id + rename 重名拒绝，双层防护 |  |
+| R-08 |  | 成立（P2；静态推断可信：接口重载→同名方法+同 @PostMapping 必然编译失败）。**未修复**——提交信息声称含 R-08，实际 RpcBridgeGenerator 零改动 |  |
+| R-09 |  | 成立（P2）。**未修复**——mapper XML 正则与 `com.ruoyi` 硬编码原样 |  |
+| R-10 |  | 成立（P2）。词元边界匹配正确，rapid-service 不再误判 |  |
+| R-11 |  | 成立（P2）。进退火前 renumber + 只统计非空社区；基线有意更新且 README 透明记录，冻结输入对拍 diff identical（Q/服务数不变实证） |  |
+| R-12 |  | 成立（P2）。未修；建议发布前修，一行级范围校验（alpha/beta∈[0,1]、minSize/maxServices≥1、topN≥0），成本低 |  |
+| R-13 |  | 成立（P2）。未修；先验后改，一行级调整 |  |
+| R-14 |  | 成立（P3）。**未修复**——README 仍是 0.2.0 / 15 tools / agent-0.2.0.jar（提交信息声称含 R-14） |  |
+| R-15 |  | 成立（P3）。已删 + .gitignore 入库 |  |
+| R-16 |  | 成立（P3）。GH Actions `mvn -B verify` 为底线；当前 HEAD 在默认工具链下构建红（agent IT）恰恰证明需要 CI 守门 |  |
+| R-17 |  | 认可为 backlog；其中 #4（MCP 异常无日志）、#7（MCP 结果无截断，违背 ≤4KB 设计约定）、#13（yml 自身判断依赖顺序）建议升 P2 |  |
+
+### 新增发现（Kimi 复核中提出）
+
+**N-01（P2）agent 在不支持的 class file 版本上静默零织入**：ByteBuddy 1.15.10 无法解析 Java 27（v69）类文件，`AgentBuilder.Listener.NoOp` 把每类的解析错误吞掉——agent 启动正常、trace 只有文件头，无任何报错。本机默认 Maven 跑在 Homebrew OpenJDK 27 上，`AgentEntryIT` 因此红。修复组合：① IT 的 fixture 编译加 `--release 17`（与环境解耦）；② agent 换带 stderr 日志的 Listener（织入失败必须可见）；③ 可选升级 ByteBuddy；④ README 写明支持的 JDK 范围。
 
 ### 开放问题回填
 
 | 问题 | 智谱意见 | Kimi 意见 | 决定 |
 |---|---|---|---|
-| Q1 |  |  |  |
-| Q2 |  |  |  |
-| Q3 |  |  |  |
-| Q4 |  |  |  |
-| Q5 |  |  |  |
-| Q6 |  |  |  |
-| Q7 |  |  |  |
-| Q8 |  |  |  |
-| Q9 |  |  |  |
-| Q10 |  |  |  |
+| Q1 |  | 当前落地（校验前置 + 危险路径守卫 + 显式 overwrite）已是 B 的合理变体，够发布；下一层加固选 C（临时目录 + 原子移动），不急 |  |
+| Q2 |  | 独立 AgentBuilder 方案实测有效（JDK 17）；必须补 N-01 的"织入失败可见"与 `--release 17` IT；WebFlux/异步本轮不承诺 |  |
+| Q3 |  | 紧凑 mapper 足够；建议后续用官方 MCP Inspector 做一次兼容性冒烟（一次性手动验证即可） |  |
+| Q4 |  | web 永远仅 localhost（已落地 127.0.0.1）；远程共享走 MCP HTTP + token（后续）；不给 web 加认证 |  |
+| Q5 |  | 短期：生成时告警 + 文档已知限制（现状已记录）；中期：复制原 parent 坐标保留继承；不做 effective-pom 内联（体积/可读性差） |  |
+| Q6 |  | tag 冲突自动加 id（已修）；RPC 重载：跳过并写 MIGRATION.md/manualItems（底线 = 不生成编译不过的代码）；JDK 类型：白名单扩 java.time/UUID/Optional，其余显式人工项；支持矩阵写进 README |  |
+| Q7 |  | imbalanceCv = 0（已按此修）；契约保持 number 类型不变 |  |
+| Q8 |  | 接受一次有意基线更新（zcode 已做且透明记录，正确姿势）；不留兼容模式——算法偏差不值得开关 |  |
+| Q9 |  | 明确"仅 macOS/Linux"，README 写明；0.x 阶段不为 Windows 付成本 |  |
+| Q10 |  | 上 GH Actions：PR 必跑 `mvn -B verify`（含 codegen IT，runner 自带 mvn）；agent/web 测试随修复补；CI 会立即抓住本次"JDK 27 构建红"这类环境回归 |  |
+
+## 9. Kimi 复核总结（2026-10-17，HEAD=9eaa312）
+
+- **修复真实性**：声称修复 13 项（R-01..R-11、R-14、R-15），实际修复 **10 项**；R-08、R-09、R-14 零改动，属提交信息过度声称，需更正记录或补修。
+- **构建状态**：HEAD 在本机默认 Maven（JDK 27）下 `mvn verify` **红**（AgentEntryIT）。根因 N-01 已定位并实证（`--release 17` 后织入恢复）。修复本身在 JDK 17 下有效（手工实测 E/N/X 行齐全）。
+- **行为保持**：R-11 的基线有意更新透明、可复现（冻结输入对拍 identical），其余修复未触碰分区行为。
+- **剩余待办**（按优先级）：N-01（构建红，最高优先）→ R-08/R-09/R-14（补修或更正记录）→ R-04 尾巴（web 路径校验）→ R-12/R-13（便宜）→ R-16 CI（防止此类环境回归再漏）。

@@ -143,6 +143,7 @@ public final class Main implements Callable<Integer> {
             options.setMinCommunitySize(minSize);
             options.setMaxServices(maxServices);
             options.setSeed(seed);
+            options.validate();
 
             PartitionResult result = new PartitionEngine(report.toGraph(), useCases, options).run();
             JsonIO.write(result, out.resolve("partition.json"));
@@ -211,6 +212,7 @@ public final class Main implements Callable<Integer> {
             if (config != null) {
                 auditConfig = JsonIO.read(config, com.monogomicro.core.audit.AuditConfig.class);
             }
+            auditConfig.validate();
             com.monogomicro.core.audit.AuditReport auditReport =
                     com.monogomicro.core.audit.ArchitectureAuditor.audit(graph, landscape, auditConfig);
             auditReport.write(out.resolve("audit.json"));

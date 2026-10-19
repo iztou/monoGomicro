@@ -94,6 +94,25 @@ public class AuditConfig {
         this.misplacedTopN = v;
     }
 
+    /** 阈值校验（R-12）：负数/NaN 阈值不产生异常而是产出无意义报告，统一拦在入口。 */
+    public void validate() {
+        java.util.Map<String, Double> numeric = new java.util.LinkedHashMap<>();
+        numeric.put("godServiceSizeRatio", godServiceSizeRatio);
+        numeric.put("godServiceMinSize", (double) godServiceMinSize);
+        numeric.put("mergePairRatio", mergePairRatio);
+        numeric.put("hollowOutInRatio", (double) hollowOutInRatio);
+        numeric.put("hollowMaxSize", (double) hollowMaxSize);
+        numeric.put("sharedAbuseTopN", (double) sharedAbuseTopN);
+        numeric.put("misplacedMargin", misplacedMargin);
+        numeric.put("misplacedTopN", (double) misplacedTopN);
+        numeric.forEach((k, v) -> {
+            if (Double.isNaN(v) || v < 0) {
+                throw new com.monogomicro.core.M2mException("E_BAD_PARAMS",
+                        "audit 阈值必须为非负有限数：" + k + "=" + v, null);
+            }
+        });
+    }
+
     /** 序列化用的扁平视图（报告 config 字段）。 */
     public Map<String, Object> describe() {
         Map<String, Object> m = new LinkedHashMap<>();

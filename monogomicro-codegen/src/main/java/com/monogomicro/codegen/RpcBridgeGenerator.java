@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -20,8 +21,42 @@ import java.util.TreeSet;
  * 消费端 —— <Provider>Client 接口（镜像原服务接口方法）+ RestTemplate 实现类；
  * 提供端 —— <Provider>RpcController，把原接口方法暴露为 POST /rpc/<Provider>/<method>。
  * 方法签名引用的类型若不在本服务编译可达范围（本服务/共享内核/JDK），该方法跳过并记录人工项。
+ *
+ * 失败策略（R-08，底线 = 不生成编译不过的代码）：
+ * 1. 接口重载方法只保留首个，其余进人工项（桥端统一 Map body 签名，重载会产生同名方法/重复路由）；
+ * 2. 签名类型三分类：项目类型按服务可达性判定；已知 JDK 类型（java.lang + 白名单）放行并补 import；
+ *    其余未知简单名一律视为不可处理——跳过并进人工项，不赌它能编译；
+ * 3. 泛型元素/数组反序列化为 LinkedHashMap 的运行时风险维持现状（README 已要求关键接口显式 DTO）。
  */
 public class RpcBridgeGenerator {
+
+    /** 编译期无需 import 的 java.lang 类型 + 基本类型/void（见 collectNames 提取粒度） */
+    private static final Set<String> JAVA_LANG = Set.of(
+            "String", "Object", "Integer", "Long", "Double", "Float", "Boolean", "Byte", "Short",
+            "Character", "Number", "StringBuilder", "StringBuffer", "Math", "System", "Class",
+            "Enum", "Throwable", "Exception", "RuntimeException", "Override", "SuppressWarnings",
+            "Deprecated", "SafeVarargs", "void", "int", "long", "double", "float", "boolean",
+            "byte", "short", "char");
+
+    /** 已知 JDK 类型 → 需要补的 import（白名单；不在表内的未知类型不再放行——R-08） */
+    private static final Map<String, String> KNOWN_JDK_IMPORTS = Map.ofEntries(
+            Map.entry("List", "java.util.List"),
+            Map.entry("Map", "java.util.Map"),
+            Map.entry("Set", "java.util.Set"),
+            Map.entry("HashMap", "java.util.HashMap"),
+            Map.entry("ArrayList", "java.util.ArrayList"),
+            Map.entry("HashSet", "java.util.HashSet"),
+            Map.entry("Collection", "java.util.Collection"),
+            Map.entry("Optional", "java.util.Optional"),
+            Map.entry("Date", "java.util.Date"),
+            Map.entry("UUID", "java.util.UUID"),
+            Map.entry("BigDecimal", "java.math.BigDecimal"),
+            Map.entry("BigInteger", "java.math.BigInteger"),
+            Map.entry("LocalDate", "java.time.LocalDate"),
+            Map.entry("LocalDateTime", "java.time.LocalDateTime"),
+            Map.entry("LocalTime", "java.time.LocalTime"),
+            Map.entry("Instant", "java.time.Instant"),
+            Map.entry("Duration", "java.time.Duration"));
 
     /** 一次跨服务注入的完整描述 */
     public static class BridgeRequest {
@@ -78,17 +113,19 @@ public class RpcBridgeGenerator {
             methods.add(new MethodSig(m.getNameAsString(), m.getType().asString(), paramTypes, paramNames));
         }
 
-        // 可见性过滤：签名中的项目类型必须在对应侧可达
+        // 可见性过滤：签名中的项目类型必须在对应侧可达；未知类型（非项目、非已知 JDK）不再放行（R-08）
         Set<String> consumerScope = new java.util.LinkedHashSet<>();
         consumerScope.add(req.consumerService);
         consumerScope.add("common");
         List<MethodSig> clientMethods = new ArrayList<>();
         for (MethodSig m : methods) {
-            if (typesReachable(m, consumerScope)) {
+            Set<String> bad = unreachableTypes(m, consumerScope);
+            if (bad.isEmpty()) {
                 clientMethods.add(m);
             } else {
                 manualItems.add("方法 " + providerSimple + "." + m.name()
-                        + " 的签名类型在消费端不可达，未生成客户端方法（服务 " + req.consumerService + "）");
+                        + " 的签名类型在消费端不可达或无法识别 " + bad + "，未生成客户端方法（服务 "
+                        + req.consumerService + "）");
             }
         }
         Set<String> providerScope = new java.util.LinkedHashSet<>();
@@ -96,43 +133,73 @@ public class RpcBridgeGenerator {
         providerScope.add("common");
         List<MethodSig> serverMethods = new ArrayList<>();
         for (MethodSig m : methods) {
-            if (typesReachable(m, providerScope)) {
+            Set<String> bad = unreachableTypes(m, providerScope);
+            if (bad.isEmpty()) {
                 serverMethods.add(m);
             } else {
                 manualItems.add("方法 " + providerSimple + "." + m.name()
-                        + " 的签名类型在提供端不可达，未生成 RPC 端点（服务 " + req.providerService + "）");
+                        + " 的签名类型在提供端不可达或无法识别 " + bad + "，未生成 RPC 端点（服务 "
+                        + req.providerService + "）");
             }
         }
+
+        // 重载冲突（R-08）：桥端方法统一为 name(Map body) 签名 + @PostMapping("/name")，
+        // 同名重载会产生重复方法与重复路由——同名只保留首个，其余进人工项
+        clientMethods = dedupeOverloads(clientMethods, providerSimple, "客户端方法");
+        serverMethods = dedupeOverloads(serverMethods, providerSimple, "RPC 端点");
 
         writeClient(req, providerSimple, clientMethods, consumerSrcRoot, basePackage);
         writeController(req, providerSimple, serverMethods, providerSrcRoot, basePackage);
         return !clientMethods.isEmpty() || !serverMethods.isEmpty();
     }
 
-    /** 签名引用的项目类型（非 JDK/外部）全部落在 allowed 集合内 */
-    private boolean typesReachable(MethodSig m, Set<String> allowed) {
+    /** 同名方法只保留首个（重载在桥端无法区分路由），其余记录人工项 */
+    private List<MethodSig> dedupeOverloads(List<MethodSig> methods, String providerSimple, String side) {
+        Set<String> seen = new HashSet<>();
+        List<MethodSig> kept = new ArrayList<>();
+        for (MethodSig m : methods) {
+            if (seen.add(m.name())) {
+                kept.add(m);
+            } else {
+                manualItems.add("接口 " + providerSimple + " 存在重载方法 " + m.name()
+                        + "，桥端无法按名路由，重载变体未生成" + side + "，需人工桥接");
+            }
+        }
+        return kept;
+    }
+
+    /** 签名引用的不可处理类型：项目类型不在 allowed 内，或不是已知 JDK/外部类型（返回空集 = 全部可达） */
+    private Set<String> unreachableTypes(MethodSig m, Set<String> allowed) {
         Set<String> names = new LinkedHashSet<>();
         collectNames(m.returnType(), names);
         for (String p : m.paramTypes()) {
             collectNames(p, names);
         }
+        Set<String> bad = new LinkedHashSet<>();
         for (String name : names) {
             String fqcn = simpleNameToFqcn.get(name);
             if (fqcn == null) {
-                continue; // JDK/外部类型，生成端依赖原项目依赖即可
+                // 非项目类型：仅已知 JDK 类型放行；其余不再赌它能编译（R-08）
+                if (!JAVA_LANG.contains(name) && !KNOWN_JDK_IMPORTS.containsKey(name)) {
+                    bad.add(name);
+                }
+                continue;
             }
             String owner = ownerOf.apply(fqcn);
             if (owner != null && !allowed.contains(owner)) {
-                return false;
+                bad.add(name);
             }
         }
-        return true;
+        return bad;
     }
 
-    /** 从类型字符串提取标识符（含泛型参数） */
+    /** 从类型字符串提取标识符（含泛型参数；跳过限定名中 '.' 之后的段，如 Map.Entry 的 Entry） */
     private void collectNames(String type, Set<String> names) {
         java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("[A-Za-z_][A-Za-z0-9_]*").matcher(type);
         while (matcher.find()) {
+            if (matcher.start() > 0 && type.charAt(matcher.start() - 1) == '.') {
+                continue; // 限定名的成员段，不是独立类型引用
+            }
             names.add(matcher.group());
         }
     }
@@ -279,16 +346,11 @@ public class RpcBridgeGenerator {
             String fqcn = simpleNameToFqcn.get(name);
             if (fqcn != null) {
                 imports.add(fqcn);
-            } else if (name.equals("List")) {
-                imports.add("java.util.List");
-            } else if (name.equals("Map")) {
-                imports.add("java.util.Map");
-            } else if (name.equals("Set")) {
-                imports.add("java.util.Set");
-            } else if (name.equals("Date")) {
-                imports.add("java.util.Date");
-            } else if (name.equals("BigDecimal")) {
-                imports.add("java.math.BigDecimal");
+            } else {
+                String jdk = KNOWN_JDK_IMPORTS.get(name); // R-08：白名单驱动，新增类型只改一处
+                if (jdk != null) {
+                    imports.add(jdk);
+                }
             }
         }
     }

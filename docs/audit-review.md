@@ -147,3 +147,29 @@ v2 §5.5 CLI 签名含 `[--config 阈值覆盖]`，Q1 定论写明"固定默认 
 修复后全量 `mvn verify`：71 单测 + 4 IT 全绿（core 44，新增 B1 回归测试）。
 
 **结论：B1-B5 全部修复到位，阶段 0-5 整体复核通过，可以进入阶段 6（真实微服务样本冒烟）。**
+
+
+# 附 3：deepseek 外部评审遗留修复（Kimi 直接修复，2026-10-19，HEAD=9eaa312 develop 工作区）
+
+背景：deepseek 评审（`docs/project-review-2026-10-17.md`）17 项中 zcode 提交 9eaa312 实修 10 项，R-08/R-09/R-14 零改动（过度声称），且 HEAD 构建红。本轮由 Kimi 直接修复剩余项，全部落盘验证。
+
+## 修复清单
+
+| 项 | 内容 | 验证 |
+|---|---|---|
+| N-01（新发现，构建红根因） | 本机 Maven 跑 Homebrew JDK 27，AgentEntryIT fixture 用 javax.tools 默认编译成 class v69，ByteBuddy 1.15.10 解析不了且 Listener.NoOp 静默吞错 → 零织入假失败。修复：fixture 编译固定 `--release 17`（与运行环境解耦）；agent 两个 AgentBuilder 的 NoOp listener 换成 onError 打 stderr（织入错误不再静默） | `mvn verify -pl monogomicro-agent` 转绿 |
+| R-08 | RpcBridgeGenerator：未知简单名不再放行——`unreachableTypes` 返回不可处理类型集合并进人工清单；同名重载去重只留首个（桥端 URL 按方法名路由，重载必冲突）；`Map.Entry` 等嵌套类型不再误判；JDK 类型白名单驱动 import。泛型/数组运行时问题不修（README 已要求显式 DTO，类级 javadoc 注明失败策略） | 编译 + GeneratedServicesRpcIT |
+| R-09 | copyMapperXml 相对路径不再用「剥模块名前缀」正则（单模块项目剥错），改为定位路径中最后一个 `mapper` 段取其后路径；consolidateClientsToCommon 去 `com/ruoyi/client` 硬编码，改用 `basePackage + ".client"` 并传参 | 见下方 R-09 连锁缺陷 |
+| R-09 连锁（修复后 IT 暴露的真实缺陷） | client 收敛 common 生效后，provider 服务也扫到 common 里的 client bean，需要 `${svc.provider.base-url}` 占位符，但 yml 生成逻辑「跳过自己」导致自身地址缺失 → provider 启动即炸（Could not resolve placeholder）。RuoYi 时代侥幸未暴露（client 只在消费方目录）。修复：writeApplicationYml 写入全部服务地址含自身（指向自己，不会被调用，无害）。同步更新 IT 断言：client 收敛到 common（原断言编码的是去 RuoYi 硬编码前的旧行为）；IT 失败日志窗口 3000 → 12000 | 手动复现环境端到端 curl 通过；GeneratedServicesRpcIT 4.2s 转绿 |
+| R-04 尾巴 | `/api/save` 加路径校验：load 时在 ConsoleState 记录 analysis 文件所在目录为 saveRoot，save 目标归一化后必须落在该目录树内，否则 400；未 load 时 409 | `mvn compile -pl monogomicro-web` |
+| R-12 | PartitionOptions.validate()（alpha/beta∈[0,1] 非 NaN、minCommunitySize≥1、maxServices≥1，抛 E_BAD_PARAMS）；AuditConfig.validate()（8 阈值非负有限）；CLI partition/audit 与 MCP computePartition 入口接入 | 编译 + 全量 verify |
+| R-13 | ConsoleState.move 先校验（未知类/未知社区）后改状态，删除末尾抛错分支 | 编译 |
+| R-14 | README 双语同步：agent jar 0.2.0→0.3.0（源码构建段，安装示例保留 0.2.0——Central 最新仍是 0.2.0）、15→17 工具并补 audit 两工具、架构体检节加版本提示、测试章节重写为 mvn verify 全量描述；McpHttpIT 注释同步 | 人工 diff |
+| R-16 | `.github/workflows/ci.yml`：ubuntu-latest + temurin 17 + `mvn -B verify`（push main/develop + PR） | yaml 落盘，待推送后观察首跑 |
+
+## 收尾验证（2026-10-19，本机 Maven=JDK 27）
+
+- 全量 `mvn verify` **BUILD SUCCESS**：core 47 单测、AgentEntryIT、codegen 10 单测、GeneratedServicesRpcIT、mcp 24 单测、McpServerIT、McpHttpIT 全绿
+- 分区基线对拍：`partition -a docs/audit-baseline/ruoyi-analysis-input.json` 输出与 `ruoyi-partition-before.json` **diff identical**（R-08/R-09/R-12 改动不影响分区行为，符合预期）
+
+未提交，提交与双推（github + nas）按项目惯例由用户/zcode 执行；提交信息英文。

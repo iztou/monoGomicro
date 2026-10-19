@@ -69,10 +69,21 @@ public final class TraceAgent {
         String finalEntryClass = entryClass;
         String finalEntryMethod = entryMethod;
 
+        // 织入错误必须可见（N-01）：ByteBuddy 解析不了的 class file 版本（如更新的 JDK）
+        // 会在 NoOp listener 下静默零织入——trace 只剩文件头，无任何报错
+        AgentBuilder.Listener errorLogging = new AgentBuilder.Listener.Adapter() {
+            @Override
+            public void onError(String typeName, ClassLoader classLoader,
+                                net.bytebuddy.utility.JavaModule module, boolean loaded,
+                                Throwable throwable) {
+                System.err.println("[monogomicro] 织入失败：" + typeName + " -> " + throwable);
+            }
+        };
+
         new AgentBuilder.Default()
                 .disableClassFormatChanges()
                 .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
-                .with(AgentBuilder.Listener.NoOp.INSTANCE)
+                .with(errorLogging)
                 .type(typeMatcher)
                 .transform((builder, type, classLoader, module, protectionDomain) -> builder
                         .visit(Advice.to(MethodAdvice.class).on(
@@ -89,7 +100,7 @@ public final class TraceAgent {
         new AgentBuilder.Default()
                 .disableClassFormatChanges()
                 .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
-                .with(AgentBuilder.Listener.NoOp.INSTANCE)
+                .with(errorLogging)
                 .type(entryType)
                 .transform((builder, type, classLoader, module, protectionDomain) -> builder
                         .visit(Advice.to(EntryAdvice.class).on(

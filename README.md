@@ -73,7 +73,7 @@ java -jar monogomicro-cli/target/m2m.jar analyze /path/to/monolith -p com.your.p
 java -jar monogomicro-cli/target/m2m.jar partition -a m2m-out/analysis.json -o m2m-out
 
 # 3. (optional) Runtime capture: start your app with the agent
-java -javaagent:monogomicro-agent/target/monogomicro-agent-0.2.0.jar=\
+java -javaagent:monogomicro-agent/target/monogomicro-agent-0.3.0.jar=\
 out=/tmp/trace.log,include=com.your.pkg.,entry=DispatcherServlet -jar app.jar
 #    then re-partition with the trace:
 java -jar monogomicro-cli/target/m2m.jar partition -a m2m-out/analysis.json -t /tmp/trace.log -o m2m-out
@@ -116,11 +116,12 @@ Note: the Host-header allowlist (DNS-rebinding protection) only accepts the bind
 loopback variants. For LAN sharing, bind your LAN IP explicitly (e.g. `--host 192.168.1.10`);
 binding `0.0.0.0` will get LAN clients 403-rejected on Host mismatch.
 
-15 tools: `analyze_project` / `load_workspace` / `ingest_trace` / `compute_partition` /
+17 tools: `analyze_project` / `load_workspace` / `ingest_trace` / `compute_partition` /
 `generate_services` (dry-run by default) / `save_partition` (pipeline);
 `get_partition_summary` / `list_classes` / `get_class_info` / `find_classes` / `get_metrics` /
 `get_migration_items` (observation, progressive disclosure, ≤4KB per tool result);
-`move_class` (returns metric delta) / `rename_service` / `undo` (editing).
+`move_class` (returns metric delta) / `rename_service` / `undo` (editing);
+`audit_architecture` / `suggest_refactoring` (architecture audit, read-only).
 Two resources — `m2m://analysis` and `m2m://partition` — let clients pull the big objects on demand.
 Errors are structured (`{code, message, hint}`, with near-miss suggestions for unknown class/service ids);
 writes are confined to the workspace root; `analyze_project` streams progress notifications
@@ -148,6 +149,9 @@ A real conversation (RuoYi, Claude Desktop):
 >         Recommend undo — `undo` applied, metrics restored.
 
 ## Architecture audit (for existing microservices)
+
+> Requires **0.3.0** (not yet on Maven Central / Homebrew at the time of writing — those channels
+> carry 0.2.0). Build from source to use it.
 
 `m2m audit` examines a codebase that is **already microservices** (Maven multi-module monorepo).
 Service boundaries are derived from Maven modules automatically (or corrected via an optional
@@ -206,8 +210,10 @@ shared-lib abuse findings (StringUtils etc. depended on by 6/7 services) all che
 
 ## Tests
 
-`mvn test`: Louvain two-cluster recovery, single-community, empty graph; trace parsing
-(single-thread use-case splitting, multi-thread interleaving).
+`mvn verify` runs the full suite: unit tests (core analysis/partition/audit, codegen, MCP session
+and tools) plus integration tests — codegen generates, installs and boots two real services with
+an HTTP-exercised RPC bridge; MCP is contract-tested over stdio and HTTP with real subprocesses;
+the agent IT forks a real JVM and asserts runtime traces actually contain use-case entries.
 
 ## License
 

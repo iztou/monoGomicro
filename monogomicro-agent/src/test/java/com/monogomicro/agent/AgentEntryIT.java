@@ -49,7 +49,10 @@ class AgentEntryIT {
         Files.writeString(src.resolve("com/demo/Entry.java"), BUSINESS);
 
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        // 固定 --release 17：fixture 默认按宿主 JDK 编译（如 JDK 27 → class v69），
+        // ByteBuddy 1.15.10 解析不了新版本 class 文件会静默零织入（N-01），IT 必须与环境解耦
         assertEquals(0, compiler.run(null, System.err, null,
+                "--release", "17",
                 "-cp", src.toString(),
                 src.resolve("com/framework/DispatcherServlet.java").toString(),
                 src.resolve("com/demo/Entry.java").toString()),
