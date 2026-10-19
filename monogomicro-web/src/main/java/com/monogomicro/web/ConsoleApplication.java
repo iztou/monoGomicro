@@ -37,6 +37,17 @@ public class ConsoleApplication {
                 return Set.of("127.0.0.1", "localhost", "[::1]", "[0:0:0:0:0:0:0:1]").contains(bare);
             }
 
+            /** F-03：浏览器同源 Origin 带 :port（http://127.0.0.1:8080）——按主机段判定。 */
+            private boolean originAllowed(String origin) {
+                String o = origin.toLowerCase();
+                for (String host : new String[]{"http://127.0.0.1", "http://localhost", "http://[::1]"}) {
+                    if (o.equals(host) || o.startsWith(host + ":")) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
             @Override
             protected void doFilterInternal(HttpServletRequest request,
                                             HttpServletResponse response, FilterChain chain)
@@ -46,9 +57,7 @@ public class ConsoleApplication {
                     return;
                 }
                 String origin = request.getHeader("Origin");
-                if (origin != null && !origin.isBlank()
-                        && !Set.of("http://127.0.0.1", "http://localhost", "http://[::1]")
-                                .contains(origin.toLowerCase())) {
+                if (origin != null && !origin.isBlank() && !originAllowed(origin)) {
                     response.sendError(HttpServletResponse.SC_FORBIDDEN, "Origin not allowed");
                     return;
                 }

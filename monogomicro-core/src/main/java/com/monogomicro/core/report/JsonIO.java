@@ -19,6 +19,39 @@ public final class JsonIO {
             //（字符串会破坏 JSON number 契约——消费端拿到的类型随内容漂移）
             .configure(com.fasterxml.jackson.core.JsonGenerator.Feature.QUOTE_NON_NUMERIC_NUMBERS, false)
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+    static {
+        // F-06：非有限 double（NaN/Infinity）写 null token——QUOTE_NON_NUMERIC_NUMBERS=false
+        // 只会写裸 NaN token，不是合法 JSON（jq/浏览器/默认 Jackson 都读不了）
+        MAPPER.registerModule(new com.fasterxml.jackson.databind.module.SimpleModule()
+                .addSerializer(Double.class, new com.fasterxml.jackson.databind.JsonSerializer<>() {
+                    @Override
+                    public void serialize(Double value,
+                                          com.fasterxml.jackson.core.JsonGenerator gen,
+                                          com.fasterxml.jackson.databind.SerializerProvider sp)
+                            throws java.io.IOException {
+                        if (value != null && !Double.isFinite(value)) {
+                            gen.writeNull();
+                        } else {
+                            gen.writeNumber(value);
+                        }
+                    }
+                })
+                // 基本类型 double 字段走不到 Double.class 序列化器——raw cast 注册
+                .addSerializer(double.class, (com.fasterxml.jackson.databind.JsonSerializer<Double>) (Object)
+                        new com.fasterxml.jackson.databind.JsonSerializer<Double>() {
+                    @Override
+                    public void serialize(Double value,
+                                          com.fasterxml.jackson.core.JsonGenerator gen,
+                                          com.fasterxml.jackson.databind.SerializerProvider sp)
+                            throws java.io.IOException {
+                        if (!Double.isFinite(value)) {
+                            gen.writeNull();
+                        } else {
+                            gen.writeNumber(value);
+                        }
+                    }
+                }));
+    }
 
     private JsonIO() {
     }
@@ -30,7 +63,12 @@ public final class JsonIO {
         } else if (value instanceof PartitionResult p) {
             p.setFormatVersion(PartitionResult.CURRENT_FORMAT_VERSION);
         }
-        Files.createDirectories(file.toAbsolutePath().getParent());
+        Path parent = file.toAbsolutePath().normalize().getParent();
+        if (parent != null && !Files.isDirectory(parent)) {
+            // F-14：已存在的父目录（如 /tmp，常为符号链接）再 createDirectories 会抛
+            // FileAlreadyExistsException——只在缺失时创建
+            Files.createDirectories(parent);
+        }
         MAPPER.writeValue(file.toFile(), value);
     }
 

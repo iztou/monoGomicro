@@ -106,7 +106,7 @@ public class AuditConfig {
         numeric.put("misplacedMargin", misplacedMargin);
         numeric.put("misplacedTopN", (double) misplacedTopN);
         numeric.forEach((k, v) -> {
-            if (Double.isNaN(v) || v < 0) {
+            if (!Double.isFinite(v) || v < 0) {
                 throw new com.monogomicro.core.M2mException("E_BAD_PARAMS",
                         "audit 阈值必须为非负有限数：" + k + "=" + v, null);
             }

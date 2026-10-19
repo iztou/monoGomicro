@@ -64,10 +64,16 @@ public class WorkspaceController {
             partition = new com.monogomicro.core.partition.PartitionEngine(
                     report.toGraph(), List.of(), new com.monogomicro.core.model.PartitionOptions()).run();
         }
-        state.load(report, partition);
+        Path analysisFile = Path.of(req.analysisPath()).toAbsolutePath().normalize();
+        Path partitionFile = req.partitionPath() == null || req.partitionPath().isBlank()
+                ? null : Path.of(req.partitionPath()).toAbsolutePath().normalize();
+        // F-07：analysis 与 partition 两个输入都记录——generate 的 outDir 守卫须同时保护
+        state.load(report, partition, analysisFile.toString(),
+                partitionFile == null ? null : partitionFile.toString());
         // 保存根：analysis 文件所在目录（/api/save 只允许写到该目录树内，防止任意路径写）
-        Path analysisDir = Path.of(req.analysisPath()).toAbsolutePath().normalize().getParent();
+        Path analysisDir = analysisFile.getParent();
         state.saveRoot(analysisDir != null ? analysisDir : Path.of("").toAbsolutePath().normalize());
+        state.analysisPath(analysisFile);
         return state();
     }
 
@@ -152,9 +158,13 @@ public class WorkspaceController {
         }
         // 与 CLI/MCP 同一安全语义：默认不覆盖非空目录（R-01），显式传 overwrite=true 才清空重建
         boolean overwrite = req.overwrite() != null && req.overwrite();
+        java.util.List<java.nio.file.Path> inputs = new java.util.ArrayList<>();
+        inputs.add(state.analysisPath());
+        state.inputPaths().stream().skip(1).forEach(sp -> inputs.add(java.nio.file.Path.of(sp)));
         GenerationResult result = new MicroserviceGenerator(
                 state.report(), state.partition(), Path.of(req.projectDir()))
-                .generate(Path.of(req.outDir()), new com.monogomicro.codegen.GenerateOptions(false, overwrite));
+                .generate(Path.of(req.outDir()), new com.monogomicro.codegen.GenerateOptions(false, overwrite)
+                        .protectedInputs(inputs.toArray(new java.nio.file.Path[0])));
         return ResponseEntity.ok(Map.of("summary", result.summary(),
                 "manualItems", result.getManualItems()));
     }

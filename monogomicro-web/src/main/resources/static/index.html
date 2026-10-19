@@ -79,7 +79,7 @@ let G = null, selected = null;
 async function api(path, body, method) {
   const resp = await fetch(path, body ? {method: method||'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)} : {});
   const data = await resp.json();
-  if (!resp.ok) throw new Error(data.error || resp.status);
+  if (!resp.ok) throw new Error((data && (data.message || data.code)) || resp.status);
   return data;
 }
 
@@ -240,7 +240,10 @@ async function doGenerate(overwrite) {
         {projectDir: projectDir.value, outDir: outDir.value, overwrite: overwrite});
     genResult.textContent = r.summary + '\n\n需人工处理 ' + r.manualItems.length + ' 项（详见 MIGRATION.md）';
     toast('生成完成');
-  } catch (e) { genResult.textContent = '失败：' + e.message; }
+  } catch (e) {
+    genResult.textContent = '失败：' + e.message;
+    throw e; // F-04：外层 generate() 依赖 rethrow 触发 E_OUTPUT_EXISTS 的 confirm 分支
+  }
 }
 
 function toast(msg) {

@@ -17,7 +17,8 @@ import java.util.jar.JarFile;
 public final class TraceAgent {
 
     public static void premain(String args, Instrumentation inst) throws Exception {
-        String out = "/tmp/monogomicro-trace.log";
+        // F-13：默认路径离开世界可读的 /tmp，落到用户目录
+        String out = System.getProperty("user.home") + "/.monogomicro/trace.log";
         String entryClass = "DispatcherServlet";
         String entryMethod = "doDispatch";
         java.util.List<String> includes = new java.util.ArrayList<>();

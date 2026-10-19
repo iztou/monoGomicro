@@ -128,7 +128,7 @@ public final class Main implements Callable<Integer> {
         int minSize;
 
         @CommandLine.Option(names = {"-m", "--max-services"}, defaultValue = "12",
-                description = "服务数量上限（超过则合并最小社区）")
+                description = "服务数量软上限（超过则尽量合并；等大孤立分量时可能超出并输出提示）")
         int maxServices;
 
         @CommandLine.Option(names = "--seed", defaultValue = "42")
@@ -287,7 +287,8 @@ public final class Main implements Callable<Integer> {
             com.monogomicro.codegen.MicroserviceGenerator generator =
                     new com.monogomicro.codegen.MicroserviceGenerator(report, partitionResult, project);
             com.monogomicro.codegen.GenerationResult result =
-                    generator.generate(out, new com.monogomicro.codegen.GenerateOptions(false, overwrite));
+                    generator.generate(out, new com.monogomicro.codegen.GenerateOptions(false, overwrite)
+                            .protectedInputs(analysis, partition));
             System.out.println(result.summary());
             System.out.println("生成目录：" + out.toAbsolutePath());
             return 0;

@@ -99,6 +99,13 @@ public final class ServicesConfig {
                 throw new M2mException("E_BAD_SERVICES_JSON",
                         "服务 " + s.getName() + " 缺少 modules（至少一个匹配模式）", null);
             }
+            // F-11：modules:[null] 曾裸 NPE（globMatch 对 null pattern）
+            for (String pattern : s.getModules()) {
+                if (pattern == null || pattern.isBlank()) {
+                    throw new M2mException("E_BAD_SERVICES_JSON",
+                            "服务 " + s.getName() + " 的 modules 含 null/空模式", null);
+                }
+            }
         }
     }
 

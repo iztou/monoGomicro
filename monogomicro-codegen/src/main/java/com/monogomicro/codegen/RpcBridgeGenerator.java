@@ -22,10 +22,12 @@ import java.util.TreeSet;
  * 提供端 —— <Provider>RpcController，把原接口方法暴露为 POST /rpc/<Provider>/<method>。
  * 方法签名引用的类型若不在本服务编译可达范围（本服务/共享内核/JDK），该方法跳过并记录人工项。
  *
- * 失败策略（R-08，底线 = 不生成编译不过的代码）：
- * 1. 接口重载方法只保留首个，其余进人工项（桥端统一 Map body 签名，重载会产生同名方法/重复路由）；
+ * 失败策略（R-08/A-08，底线 = 桥自身生成的代码必须可编译）：
+ * 1. 接口重载方法只保留首个，其余生成抛 UnsupportedOperationException 的保底 stub
+ *    （桥端统一 Map body 签名，重载会产生同名方法/重复路由）；
  * 2. 签名类型三分类：项目类型按服务可达性判定；已知 JDK 类型（java.lang + 白名单）放行并补 import；
- *    其余未知简单名一律视为不可处理——跳过并进人工项，不赌它能编译；
+ *    其余未知简单名一律视为不可处理——任一侧存在即整对放弃桥接、不改写注入并进人工项
+ *    （放弃后消费端仍引用 provider 侧接口，该服务模块的编译需人工完成，人工项会写明）；
  * 3. 泛型元素/数组反序列化为 LinkedHashMap 的运行时风险维持现状（README 已要求关键接口显式 DTO）。
  */
 public class RpcBridgeGenerator {
@@ -165,7 +167,9 @@ public class RpcBridgeGenerator {
         }
 
         // A-08 失败策略：任一侧存在"类型不可达"的被跳过方法时，无法给出可编译的镜像签名，
-        // 整对不改写注入（消费端保留原引用并记人工项），绝不生成编译不过的代码
+        // 整对不改写注入（消费端保留原引用并记人工项）。注意：此路径下消费端仍引用只在
+        // provider 模块的接口，生成工程编译需要人工介入（人工项已写明）——本策略保证的是
+        // "桥本身生成的代码可编译"，不是"放弃桥接后工程仍可编译"
         boolean consumerBlocked = typeSkippedConsumer > 0;
         boolean providerBlocked = typeSkippedProvider > 0;
         if (consumerBlocked || providerBlocked) {

@@ -27,7 +27,18 @@ public final class TraceRecorder {
         }
         running = true;
         Thread writer = new Thread(() -> {
-            try (BufferedWriter bw = java.nio.file.Files.newBufferedWriter(Path.of(outFile),
+            Path tracePath = Path.of(outFile);
+            // F-13：不跟随已有符号链接（防 /tmp 下的预置链接劫持写入位置）
+            try {
+                if (java.nio.file.Files.exists(tracePath)
+                        && java.nio.file.Files.isSymbolicLink(tracePath)) {
+                    java.nio.file.Files.delete(tracePath);
+                }
+                java.nio.file.Files.createDirectories(tracePath.getParent());
+            } catch (IOException prep) {
+                // 准备失败交由下方打开逻辑统一报错停机
+            }
+            try (BufferedWriter bw = java.nio.file.Files.newBufferedWriter(tracePath,
                     StandardCharsets.UTF_8,
                     java.nio.file.StandardOpenOption.CREATE,
                     java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,

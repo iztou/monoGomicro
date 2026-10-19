@@ -11,6 +11,8 @@ public class GenerateOptions {
 
     private boolean dryRun;
     private boolean overwrite;
+    /** A-07：输入文件（analysis/partition 等）绝对路径——outDir 包含任一输入即拒绝，防止清空目录时连带删掉输入 */
+    private java.util.List<java.nio.file.Path> protectedInputs = java.util.List.of();
 
     public GenerateOptions() {
     }
@@ -34,4 +36,17 @@ public class GenerateOptions {
     public void setDryRun(boolean dryRun) { this.dryRun = dryRun; }
     public boolean isOverwrite() { return overwrite; }
     public void setOverwrite(boolean overwrite) { this.overwrite = overwrite; }
+    public java.util.List<java.nio.file.Path> getProtectedInputs() { return protectedInputs; }
+    public GenerateOptions protectedInputs(java.nio.file.Path... inputs) {
+        java.util.List<java.nio.file.Path> list = new java.util.ArrayList<>();
+        if (inputs != null) {
+            for (java.nio.file.Path p : inputs) {
+                if (p != null) {
+                    list.add(p);
+                }
+            }
+        }
+        this.protectedInputs = java.util.List.copyOf(list);
+        return this;
+    }
 }

@@ -218,6 +218,18 @@ public class MicroserviceGenerator {
     public GenerationResult generate(Path out, GenerateOptions options) throws Exception {
         Path outDir = out.toAbsolutePath().normalize();
         guardOutDir(outDir);
+        // A-07 残余：outDir 等于/包含输入文件所在位置时，清空重建会连带删掉 analysis/partition
+        for (java.nio.file.Path input : options.getProtectedInputs()) {
+            if (input == null) {
+                continue;
+            }
+            java.nio.file.Path abs = input.toAbsolutePath().normalize();
+            if (abs.startsWith(outDir)) {
+                throw new M2mException("E_BAD_OUT_DIR",
+                        "输出目录包含本次输入文件（" + abs + "），清空重建会删掉输入：" + outDir,
+                        "更换输出目录，或先把输入文件移出该目录");
+            }
+        }
         if (options.isDryRun()) {
             Path tempDir = Files.createTempDirectory("m2m-dryrun-");
             try {
@@ -424,7 +436,21 @@ public class MicroserviceGenerator {
         if (prefix == null || prefix.isEmpty()) {
             prefix = "com.generated";
         }
-        return prefix;
+        // F-01：analysis.json 可编辑——packageName 携带 "../" 时 basePackage 会拼出
+        // 逃逸路径（writeApplicationClass/consolidateClientsToCommon 都在用它）。
+        // 只保留合法 Java 标识符段；任何段非法则截断到最近的合法前缀
+        String[] segs = prefix.split("\\.", -1);
+        StringBuilder safe = new StringBuilder();
+        for (String seg : segs) {
+            if (!seg.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+                break;
+            }
+            if (safe.length() > 0) {
+                safe.append('.');
+            }
+            safe.append(seg);
+        }
+        return safe.length() == 0 ? "com.generated" : safe.toString();
     }
 
     private String commonPrefix(String a, String b) {
@@ -635,6 +661,24 @@ public class MicroserviceGenerator {
             Set<String> bridgedProviders = new LinkedHashSet<>();
             for (String providerFqcn : e.getValue()) {
                 String providerOwner = ownerOf.get(providerFqcn);
+                // N-02：consumerToProviders 是跨服务共享「提升前」探测的快照；提升后两端可能
+                // 同归 common/同一服务——同模块注入必须保持本地调用，生成自桥会让同服务调用
+                // 绕 HTTP 打自己（9 组 common->common 桥实测暴露）
+                if (consumerOwner == null || providerOwner == null || providerOwner.equals(consumerOwner)) {
+                    continue;
+                }
+                // F-02：接口被闭包提升进 common 后 providerOwner=common——桥必须路由到
+                // 实现类（SERVICE_IMPL）所在服务，否则 client 用 ${svc.common.base-url}
+                //（yml 无此 key，启动死在 placeholder）、controller 放错模块
+                if ("common".equals(providerOwner)) {
+                    String implOwner = serviceImplOwnerOf(providerFqcn);
+                    if (implOwner == null) {
+                        result.getManualItems().add("接口 " + providerFqcn
+                                + " 已提升进 common 但实现类属主不明（多服务实现/未注册），未生成桥（需人工）");
+                        continue;
+                    }
+                    providerOwner = implOwner;
+                }
                 ClassInfo providerInfo = classIndex.get(providerFqcn);
                 Path providerSrc = projectDir.resolve(providerInfo.getSourcePath());
                 if (!Files.isRegularFile(providerSrc)) {
@@ -670,6 +714,36 @@ public class MicroserviceGenerator {
             }
             result.getManualItems().add("跨服务依赖未自动改写：" + desc);
         }
+    }
+
+    /** 接口 → SERVICE_IMPL 实现类的属主服务（多实现/零实现返回 null，由调用方记人工项）。 */
+    private String serviceImplOwnerOf(String interfaceFqcn) {
+        String simple = interfaceFqcn.substring(interfaceFqcn.lastIndexOf('.') + 1);
+        String found = null;
+        for (ClassInfo c : report.getClasses()) {
+            if (c.getStereotype() == ClassStereotype.SERVICE_IMPL
+                    && interfaceFqcn.equals(c.getInterfaces() == null ? null
+                            : c.getInterfaces().isEmpty() ? null : matchInterface(c, simple, interfaceFqcn))) {
+                String owner = ownerOf.get(c.getFqcn());
+                if (owner != null && !"common".equals(owner)) {
+                    if (found != null && !found.equals(owner)) {
+                        return null; // 多服务实现：无法自动路由
+                    }
+                    found = owner;
+                }
+            }
+        }
+        return found;
+    }
+
+    /** impl 的 implements 列表里是否含目标接口（简单名或全限定名匹配）。 */
+    private static String matchInterface(ClassInfo impl, String simpleName, String interfaceFqcn) {
+        for (String itf : impl.getInterfaces()) {
+            if (itf.equals(interfaceFqcn) || itf.endsWith("." + simpleName)) {
+                return interfaceFqcn;
+            }
+        }
+        return null;
     }
 
     /** 目录名（svc-xxx）→ 去重 tag（去掉 svc- 前缀）。 */
@@ -805,6 +879,11 @@ public class MicroserviceGenerator {
                 """.formatted(basePackage, appName, appName);
         Path file = serviceRoot.resolve("src/main/java")
                 .resolve(basePackage.replace('.', '/') + "/" + appName + ".java");
+        // F-01 双保险：Application 路径归一化后必须仍在模块内
+        if (!file.normalize().startsWith(serviceRoot.resolve("src/main/java").normalize())) {
+            throw new M2mException("E_BAD_PACKAGE", "生成的 Application 路径越出模块：" + file,
+                    "analysis.json 的 packageName/basePackage 含非法段");
+        }
         Files.createDirectories(file.getParent());
         Files.writeString(file, content, StandardCharsets.UTF_8);
         generatedMainClasses.put(dir, basePackage + "." + appName);

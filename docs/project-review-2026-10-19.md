@@ -741,3 +741,302 @@ A-01/A-02 揭示的「测试绿但产品不可用」是本仓库当前最真实�
 第一批（0.3.0 发布门禁）：A-01+A-02（生成工程真实可用）→ A-04（安全）→ A-03（一行配置级修复）→
 A-05（tag 唯一表）→ A-06（Q 口径+一致性测试）→ A-07/A-20（输出目录守卫）→ A-08/A-09（桥失败策略闭环）。
 A-08 的修法倾向「跳过即失败并把调用点列进人工项」，与 R-08 的失败策略哲学一致，比保底签名诚实。
+
+
+---
+
+# 附 D：Kimi 复核 zcode 三轮修复（2026-10-19 17:20，HEAD=84c831d develop）
+
+范围：`dc3e3b2`（第一批 A-01..A-07）+ `617310b`（第二批 A-08..A-23）+ `84c831d`（P2/P3 sweep）。
+方式：全量 verify、冻结基线对拍、真实 RuoYi 生成+package+启动实测、web/MCP 端点实测、逐 diff 读码。
+
+## D.1 总体验证
+
+- 全量 `mvn verify` **BUILD SUCCESS**（81 单测 + 5 IT 全绿）
+- 冻结基线对拍 **identical**（A-06 只改 PartitionMetrics 展示口径，A-37 未触动生产路径输出）
+- A-16 后 analyze 复跑 RuoYi：290 类 / 980 边，**与冻结基线一致**（RuoYi 无 record/模式匹配等新语法，新增提取未触发；README 数字无需再漂移）
+
+## D.2 P0/P1 实测复核
+
+| 项 | 结论 | 证据 |
+|---|---|---|
+| A-01 双 main | ✅ 闭环（实测） | RuoYi 重新生成后 `mvn -DskipTests package` **12 个服务 jar 全部产出**；svc-dict 只剩 M2mDictApplication（原 RuoYiApplication/RuoYiServletInitializer 跳过并列人工项）；POM 显式 mainClass 双保险 |
+| A-02 MapperScan/数据源 | ✅ 核心闭环（实测） | svc-user 启动从「No qualifying bean SysUserMapper」推进到「Failed to configure a DataSource: url not specified」——mapper bean 已能找到（@MapperScan 配置提升 common 生效），死于缺 jdbc url 属配置迁移人工项，正是 deepseek 定的验收线。MIGRATION.md 已列 datasource/mybatis 迁移人工项 |
+| A-03 /api/save 500 | ✅ 闭环（实测） | web pom `-parameters` + `@RequestParam("path")` 双保险；实测 save 200 成功、越界路径 400（R-04 的 saveRoot 校验至此首次真正生效） |
+| A-04 路径穿越 | ✅ 闭环（代码） | 三层：包名合法性强校验（正则标识符序列）、sourcePath 必须相对且不越 projectDir、目标路径 normalize+startsWith 模块根 |
+| A-05 tag 冲突 | ✅ 闭环（代码） | `communityTags`（社区 id → 去重 tag）唯一权威表，copyClasses/yml/portOfTag/providerNameKey/partitionName 全部改从表取 |
+| A-06 modularity | ✅ 闭环（实测） | 诱导子图重算落地；web /api/state 实测 Q=0.7649872570516053，与 deepseek 子代理复算值 0.7649872570516043 仅末位浮点差；与 partition.json（0.7668）差异来自引擎内部图构建，可解释 |
+| A-07 删输入/普通文件 | ◐ **半闭环** | 普通文件拒绝 ✅、符号链接 toRealPath ✅（A-20 一并修了）；**但「-o 等于 -a/-p 输入文件所在目录」仍未拒绝**——guardOutDir 收不到输入路径，deepseek 证据 A 场景（-o 指向放着 analysis.json 的目录 + --overwrite）现在依然会删掉输入。数据丢失类，应补 |
+| A-08 跳过策略 | ◐ 方向正确，注释言过其实 | 不可达类型时整对放弃桥接、不改写注入 ✅（采纳了「跳过即失败」路线）；重载变体生成 UnsupportedOperationException stub ✅（编译过、运行时响亮失败）。但「绝不生成编译不过的代码」注释不准确：放弃桥接后消费类仍引用只在 provider 模块的接口，照样编译失败（人工项文案「编译需人工」倒是诚实的）。建议注释与文案口径统一 |
+| A-09 白名单误判 | ✅ 闭环（代码） | extends/super/final 关键字排除、限定名只取末段、单字母大写类型变量放行、JAVA_LANG/KNOWN_JDK_IMPORTS 扩充（含 Map.Entry） |
+
+## D.3 第二批/P3 抽查
+
+| 项 | 结论 | 证据 |
+|---|---|---|
+| A-10 MCP normalize | ✅ | WorkspaceSession 两处赋值均改 `toAbsolutePath().normalize()` |
+| A-11 Host/Origin | ✅（实测） | 恶意 Host 访问 /api/state 返回 403 |
+| A-12 前端 overwrite | ✅ | 默认 false，E_OUTPUT_EXISTS 后 confirm 二次确认再重试；新增 ApiErrorHandler 把 M2mException 映射 4xx |
+| A-13 MCP 错误体 | ✅（实测） | 4xx 返回干净 JSON-RPC envelope（`{"error":{"code":-32601,...},"id":null}`），不再泄露堆栈 |
+| A-15 解析失败可见 | ✅ | parseFailures 计入 AnalysisReport + WARN 日志 |
+| A-16 类型位置补全 | ✅ 实现 / ⚠️ 零测试 | record/cast/instanceof/catch/throws/局部变量/方法引用均已落；**但 parser 测试目录无新增用例**（仍是只断言节点集合的两个旧测试），新提取路径在 RuoYi 样本上零触发（980 边不变），等于全网无实证覆盖 |
+| A-39 README | ✅ | MCP 进模块清单（双语）、Q=0.77 / ~20% 耦合率与实测一致；AGENTS.md 的 71 单测/4 IT 未更新（现为 81/5），属会话注入文件，可下轮顺手改 |
+
+## D.4 新发现
+
+**N-02（P2，语义错误）：common→common 自桥。** MIGRATION.md 显示 16 组 RPC 桥中 9 组是
+`common -> common`（ISysUserService/ISysMenuService/ISysConfigService 等）。根因：
+`consumerToProviders` 在 step 1（提升前）探测，step 4 `promoteCrossServiceShares` 把消费类/provider
+双双提升进内核后，step 5 `rewriteCrossServiceCalls` 仍按旧快照生成桥——同模块内的本地注入被改写为
+HTTP 客户端调用（借 yml 里自身 base-url 兜底能跑，但语义错误、性能荒唐）。
+修复方向：step 5 生成桥前重新判定 `ownerOf` 终态，from==to 则跳过改写（保持本地注入）。
+该问题在 10-19 审查样本中已存在（16 组桥一致），deepseek 未抓，本轮实测暴露。
+
+## D.5 结论
+
+**第一轮发布门禁（A-01/A-02）实测通过，第二批主流程项全部落地。0.3.0 发布前剩余必须项：**
+1. A-07 残余：`-o` 拒绝等于/包含输入文件所在目录（把 -a/-p 路径传入 guard）；
+2. N-02：common 自桥至少应跳过（一行判定 + 人工项）；
+3. A-16 补最小 fixture 边断言单测（新提取路径目前零覆盖）；
+4. A-08 注释口径修正（一行）。
+
+以上均为小修。其余 P2/P3 项（A-21 序列化、A-24 NaN 序列化、A-29..A-36 等）按 sweep 提交已处理，
+本轮未逐条复核，建议 0.3.0 后迭代期抽查。
+
+
+---
+
+# 附 E：Kimi 修复附 D 剩余四项（2026-10-19 17:40，HEAD=84c831d develop 工作区）
+
+| 项 | 修复 | 验证 |
+|---|---|---|
+| A-07 残余 | `GenerateOptions` 新增 `protectedInputs`（输入文件路径）；`generate()` 在 guardOutDir 后逐个校验：输入文件落在 outDir 内即抛 `E_BAD_OUT_DIR`。三入口接入：CLI 传 `-a`/`-p`；web 在 /api/load 时把 analysis 路径记入 ConsoleState、/api/generate 传入；MCP `loadWorkspace` 记录 analysis/partition 路径（analyze 会话清空残留） | 实测：`-o` 指向输入所在目录 + `--overwrite` → 拒绝，错误信息点名输入文件，输入文件原样保留 |
+| N-02 自桥 | `rewriteCrossServiceCalls` 生成桥前重新判定终态归属：consumer/provider 同模块（含同归 common）则跳过，保持本地注入 | RuoYi 回归：16 组桥 → **7 组**（9 组 common→common 自桥全消失，注入改写 13 → 7 处同步减少）；生成工程 `mvn package` 仍 12 jar 全出 |
+| A-16 测试 | 新增 `ProjectScannerTypePositionTest`：7 个提取位置逐位置断言边存在 + 顶层 record 形态。**测试首跑即抓起一个真缺陷**：zcode 的 record 提取用 `decl instanceof RecordDeclaration`，嵌套 record（外层是 class）永远进不了分支——已修为 `findAll` 下钻（含顶层形态） | 修复后 core 49 单测全绿 |
+| A-08 注释 | 类级 javadoc 与阻断分支注释改为诚实口径：「桥自身生成的代码必须可编译」；放弃桥接时明确写出「该服务模块的编译需人工完成」 | 读码确认 |
+
+## 收尾验证
+
+- 全量 `mvn verify` **BUILD SUCCESS**（core 49 单测 + 其余模块与 5 IT 全绿）
+- 冻结基线对拍 **identical**
+- RuoYi 端到端回归：生成 → package（exit=0，12 jar）→ 桥列表无语义错误条目
+
+未提交，提交与双推（github + nas）按惯例由用户/zcode 执行，提交信息英文。
+
+**至此 2026-10-19 审查报告的 P0/P1 全部闭环，0.3.0 发布的代码侧门禁已清除；剩余为 P2/P3 迭代的抽查与 CI 首跑观察（ci.yml 已提交，推送后可在 GitHub Actions 确认）。**
+
+---
+
+# 附 F：DeepSeek 修复后独立复核（2026-10-19 17:35，HEAD=84c831d + 未提交工作区）
+
+范围：`dc3e3b2` / `617310b` / `84c831d` 三个提交 + 工作区 A-07/N-02/A-16/A-08 收尾改动。
+方式：`mvn clean verify`、RuoYi 重新生成 + `mvn package` + 启动、CLI/Web/MCP 端点实测、逐 diff 读码。
+结论：**附 E 的「P0/P1 全部闭环」需要修正**。A-01/A-02/A-03/A-05/A-07(CLI)/A-10/A-16 等确实修好了，
+但 A-04 仍有一条写盘逃逸、N-02 仍残留 4 组 `svc-* -> common` 桥、A-11 引入浏览器 POST 403 回归；
+A-12/A-15/A-24/A-07(web) 也还只能算半闭环。
+
+## F.1 基线【实测】
+
+- `mvn -B clean verify` **BUILD SUCCESS**：core 49 + codegen 10 + mcp 24 = **83 单测**；5 个 IT（agent 1、codegen 1、mcp 3）；web/cli 仍为 0。
+- RuoYi 重新生成：12 个服务 / 263 类 / 7 组 RPC 桥 / 7 项人工；生成工程 `mvn -DskipTests package` **12 个 jar 全部产出**（A-01 已闭环）。
+- `svc-user` 启动：从 `No qualifying bean SysUserMapper` 推进到 `Failed to configure a DataSource`，`@MapperScan` 已进 common（A-02 的 mapper 部分已闭环，但见 F-02 的下一个启动错误）。
+- 冻结基线 `partition` 对拍仍 identical；`analyze` RuoYi 仍 290 类 / 980 边 / 5901 权重。
+
+## F.2 附 D/E 需要修正的结论
+
+| 附 D/E 的说法 | 实际 |
+|---|---|
+| A-04「三层校验，闭环」 | `copyClasses` 被拦住了，但 `writeApplicationClass` 仍按未校验的 `commonPackagePrefix()` 拼路径，实测仍写出 outDir 之外的 `M2mXApplication.java`（F-01） |
+| N-02「9 组 common→common 自桥全消失，7 组无语义错误」 | 9 组自桥确实消失，但 7 组里有 **4 组是 `svc-* -> common`**，controller/client 仍在 common、`${svc.common.base-url}` 仍无定义（F-02） |
+| A-11「Host/Origin 校验通过」 | 只测了恶意 Host；`Origin` 白名单没有端口，浏览器同源 POST（带 `:port`）全部 403（F-03） |
+| A-12「confirm 二次确认」 | `doGenerate` 内部 catch 吞掉异常，外层 confirm 永远不执行；`api` 又把错误体字段读成 `data.error`（后端是 `code/message`），连错误文案都不对（F-04） |
+| A-15「解析失败可见」 | 只处理 JavaParser 返回 `null`；真实语法错误多半是「有 CU + problems + 0 类型」的恢复路径，仍然静默丢类、`parseFailures` 为空（F-05） |
+| A-24「NaN 按规范写 null」 | 代码只是关掉 quote，实际写出裸 `NaN`，不是合法 JSON，`JsonIO.read` 自己都读不回来（F-06） |
+| A-07「三入口全部接入」 | CLI/MCP 已是；web 只把 `analysisPath` 记进 ConsoleState，`partitionPath` 仍可被 generate 清掉（F-07） |
+
+## F.3 已确认闭环（本轮实测）
+
+| 项 | 证据 |
+|---|---|
+| A-01 双 main | 12 jar 全出；`svc-dict` 只剩 `M2mDictApplication`，原 `RuoYiApplication`/`RuoYiServletInitializer` 已跳过 |
+| A-02 mapper | common 下 `ApplicationConfig` 带 `@MapperScan("com.ruoyi.**.mapper")`；启动错误推进到 DataSource |
+| A-03 save | `/api/save` 200；越界路径 400 |
+| A-05 tag 冲突 | `alpha` / `alpha-service` → `svc-alpha`(19 类) / `svc-alpha-1`(4 类)，yml 两个 key，不再合并 |
+| A-06 展示口径 | `PartitionMetrics.of` 0.764987（旧 0.5476 已修）；与 partition.json 0.7668 仍差 0.0018，列 P3 |
+| A-07 CLI | `-o` 指向输入所在目录/普通文件均 exit=2，输入原样保留 |
+| A-10 MCP normalize | `workspaceRoot`/`projectDir` 均 `toAbsolutePath().normalize()` |
+| A-11 Host | 伪造 Host 返回 403 |
+| A-13 堆栈 | 4xx 不再出现 `stackTrace`（但 envelope 仍缺 jsonrpc，P3） |
+| A-14 agent | `OnMethodExit(onThrowable=Throwable.class)` 已落 |
+| A-16 类型位置 | 实测 `A -> B`(record/FIELD)、`A -> Ex`(throws/PARAM_RETURN)、`A -> C`(new) 均出现 |
+| A-19 分页 | findings top20 / moves top10 + `truncated` 字段 |
+| A-22 min-size | 输出「20 个服务低于 --min-size=30（软约束…）」提示 |
+| A-23 sharedAbuse | `businessCount < 3` 直接跳过 |
+| N-02 自桥 | `common -> common` 9 组已消失；桥总数 16 → 7 |
+
+## F.4 仍存在的问题
+
+### F-01（P1，实测）A-04 仍有一条 Application 路径逃逸
+
+**证据**：
+
+```bash
+rm -rf /tmp/evil-out /tmp/evil-write
+java -jar monogomicro-cli/target/m2m.jar generate \
+  -a /tmp/evil-analysis.json -p /tmp/evil-partition.json \
+  -o /tmp/evil-out --project /tmp/mini-proj
+# exit=0
+find /tmp/evil-write -type f
+# /tmp/evil-write/M2mXApplication.java     ← 仍在 outDir 之外
+```
+
+`A.java` 已被 `copyClasses` 的包名/sourcePath/目标路径三层校验拦住（outDir 下没有 java 文件），
+但 `commonPackagePrefix()`（`MicroserviceGenerator.java:430`）直接取 analysis 里未校验的
+`packageName`，`writeApplicationClass()`（`:807`）再用它拼
+`serviceRoot/src/main/java/<basePackage>/M2mXApplication.java`，没有 `startsWith` 守卫；
+`consolidateClientsToCommon()` 同样用 `basePackage` 拼路径。
+
+**修复**：在 `generate()` 入口对 report 全量 `packageName` 做合法性强校验（或让
+`commonPackagePrefix` 过滤非法段并回退 `com.generated`），并对 `writeApplicationClass`/
+`consolidateClientsToCommon` 的每个目标路径做 `normalize().startsWith(moduleRoot)` 校验。
+补一个「非法 packageName + 合法 sourcePath」的回归测试。
+
+### F-02（P1，实测）N-02 只修了 common→common，仍有 4 组 `svc-* -> common` 桥
+
+**证据**：
+
+```bash
+find /tmp/webtest2 -name '*RpcController.java' | sed 's|/src/main/java.*||' | sort | uniq -c
+#   4 ./common
+#   1 ./svc-notice
+grep -rn 'svc\.common' /tmp/webtest2 --include='*.java' --include='*.yml'
+# common/.../ISysConfigServiceClientImpl.java: @Value("${svc.common.base-url}")
+# ... 共 4 个 client
+grep -c '^  common:' /tmp/webtest2/svc-*/src/main/resources/application.yml
+# 0
+grep -n 'RPC 桥' -A 10 /tmp/webtest2/MIGRATION.md
+# svc-user -> common（ISysConfigService） 等 4 条
+```
+
+**根因**：`detectCrossServiceInjections` 在提升前拍快照；`expandKernelClosure`
+（`MicroserviceGenerator.java:68-96`）会把 kernel 类出边上的**所有**目标拉进 common，
+包括 `SERVICE` 接口——`promoteCrossServiceShares` 的 SERVICE 跳过发生在更晚的路径上，拦不住闭包。
+接口进 common 后，`providerOwner=common`、`consumerOwner=svc-x`，N-02 的
+`providerOwner.equals(consumerOwner)` 不成立，桥照旧生成。
+
+**后果**：common 里 4 个 `@Value("${svc.common.base-url}")` client bean 被每个服务组件扫描，
+yml 没有 `common` key → 所有服务在 DataSource 之后会以
+`Could not resolve placeholder 'svc.common.base-url'` 失败；common 里的 controller 还
+`@Autowired` 只存在于 svc-config 等服务的 impl，非 provider 服务会缺 bean。
+即：**A-02 只是把「缺 mapper」换成了「缺 datasource」，再往后还有这个启动错误**。
+
+**修复**：闭包遇到 `SERVICE` 构造型不要拉进 common；桥生成时如果 `providerOwner=common`，
+按 `graph.inEdges(interface)` 找 `SERVICE_IMPL` 的属主作为 provider 服务（多个则人工项），
+或者至少跳过桥并把「该接口的 impl 服务」写进人工项。补一个 provider 接口被提升的 fixture。
+
+### F-03（P1，实测）A-11 Origin 白名单漏端口，浏览器 POST 全部 403
+
+**证据**：
+
+```bash
+curl -X POST -H 'Content-Type: application/json' \
+  -H 'Origin: http://127.0.0.1:18090' \
+  -d '{"analysisPath":"/tmp/ruoyi-check/analysis.json"}' \
+  http://127.0.0.1:18090/api/load
+# 403 {"status":403,"error":"Forbidden","path":"/api/load"}
+# 去掉 Origin 头 → 200
+```
+
+`ConsoleApplication.java:50` 的允许集是 `http://127.0.0.1`、`http://localhost`、`http://[::1]`，
+不含端口；浏览器对同源 POST 会发送带端口的 `Origin: http://127.0.0.1:<port>`，所以控制台的
+`/api/load`、`/api/move`、`/api/save`、`/api/generate` 会全部 403。GET `/api/state` 不带 Origin 仍可用，
+很容易让人误判"只是某个接口坏了"。
+
+**修复**：解析 Origin 的 scheme/host/port，与请求的 Host 同源即放行（loopback 任意端口），
+或按 `http://127.0.0.1:*` / `http://localhost:*` / `http://[::1]:*` 匹配。补一条带 Origin 的 MockMvc 测试。
+
+### F-04（P2，实测）A-12 前端 confirm 是死代码，错误体字段也不匹配
+
+`index.html:236` 的 `doGenerate` 自己 `catch (e) { genResult.textContent = ... }`，
+**不 rethrow**；外层 `generate()`（`:213`）的 `catch` 永远收不到 `E_OUTPUT_EXISTS`，confirm 分支不可达。
+即使 rethrow，`api()`（`:82`）是 `throw new Error(data.error || resp.status)`，而后端
+`ApiErrorHandler` 返回的是 `{code, message, hint}`，`data.error` 为 undefined → 错误消息变成 `"400"`，
+`includes('E_OUTPUT_EXISTS')` 也不会命中。
+
+**修复**：`doGenerate` 失败时 rethrow（展示交给外层）；`api()` 用
+`data.message || data.code || resp.status`；补一条"非空目录 → confirm → overwrite 重试"的前端/契约测试。
+
+### F-05（P2，实测）A-15 只处理「解析返回 null」，JavaParser 恢复场景仍静默丢类
+
+**证据**：
+
+```bash
+# p/A.java 正常；p/B.java: public class B { void broken( { } }
+java -jar m2m.jar analyze /tmp/brokenproj -p p --no-maven-classpath -o /tmp/broken-out
+# 类数量 1，无 WARN；jq .parseFailures → []
+```
+
+JavaParser 对 `B.java` 返回的是 **present=true + problems=[Parse error...] + types=[]**，
+`ProjectScanner.java:159-166` 只在 `cu == null` 时记 `parseFailures`，于是这类最常见的语法错误
+仍然"成功但缺类"，而且没有任何警告。
+
+**修复**：`!result.getProblems().isEmpty()` 时也记 `parseFailures`（可区分 fatal/warn），
+或在 `cu.getTypes().isEmpty() && 文件非空` 时记；`parseFailures` 在 `scan()` 开头清空（实例复用）。
+补一条"恢复型语法错误"的回归测试。
+
+### F-06（P2，实测）A-24 把 NaN 写成裸 token，输出不是合法 JSON
+
+**证据**：
+
+```java
+p.setModularity(Double.NaN);
+JsonIO.mapper().writeValue(Path.of("/tmp/nan2.json").toFile(), p);
+// 文件内容："modularity" : NaN,
+JsonIO.read(Path.of("/tmp/nan2.json"), PartitionResult.class);
+// JsonParseException: Non-standard token 'NaN': enable JsonReadFeature.ALLOW_NON_NUMERIC_NUMBERS
+```
+
+`JsonIO.java:20` 只是 `QUOTE_NON_NUMERIC_NUMBERS=false`，并没有像注释说的"写成 null token"。
+结果是：标准 JSON 解析器（jq、浏览器 JSON.parse、Jackson 默认）全部读不了，工具自己的
+`JsonIO.read` 也读不回来。**修复**：注册 `Double.NaN/Infinity -> null` 的 custom serializer
+（或在写前 sanitize 成 0），保持 `number|null` 契约；补 round-trip 测试。
+
+### F-07（P2，实测）A-07 的 web 入口只保护 analysis，`partitionPath` 仍会被 generate 删掉
+
+**证据**：
+
+```bash
+# analysis 在 /tmp/ruoyi-check，partition 在 /tmp/part-only（不同目录）
+curl -X POST .../api/load -d '{"analysisPath":"/tmp/ruoyi-check/analysis.json",
+                               "partitionPath":"/tmp/part-only/partition.json"}'   # 200
+curl -X POST .../api/generate -d '{"projectDir":"...","outDir":"/tmp/part-only","overwrite":true}'  # 200
+ls /tmp/part-only/partition.json   # No such file
+```
+
+`ConsoleState` 只记录 `analysisPath`（`ConsoleState.java:21`），`/api/generate` 只把
+`state.analysisPath()` 传给 `protectedInputs`（`WorkspaceController.java:160`）；
+`partitionPath` 没有进入保护集。**修复**：load 时把 partition 路径也记入 ConsoleState，
+generate 时一起传入（CLI/MCP 已经是这样）。
+
+## F.5 其余 P3（未逐条复跑，代码/实测可确认）
+
+| ID | 发现 | 证据/位置 | 建议 |
+|---|---|---|---|
+| F-08 | MCP 4xx envelope 仍缺 `"jsonrpc":"2.0"` | `McpServerMain.java:174-180` 输出 `{"error":{...},"id":null}`；实测 400 | serializer 补 `jsonrpc` 字段 |
+| F-09 | partition.json 与 Web/MCP 的 Q 仍双值 | 0.7668238146123224 vs 0.7649872570516053（融合权重取整差异） | 统一用同一张图算 Q，或文档说明容差 |
+| F-10 | A-28 校验未真正补齐 | `AuditConfig.java:109` 仍只有 `isNaN || <0`；`PartitionOptions.java:8` 无 `alpha+beta>0`；`1e999`/`--alpha 0 --beta 0` 实测均 exit=0 | 改 `!Double.isFinite(v)`；加 `alpha+beta>0`；`ArchitectureAuditor.audit()` 内校验 |
+| F-11 | `services.json` 的 `modules:[null]` 仍裸 NPE | 实测 `Cannot invoke "String.indexOf(int)" because "pattern" is null`；`ServicesConfig.validate` 只查 list 非空，不查元素 | validate 拒绝 null/空白 pattern |
+| F-12 | `--max-services` 仍是软约束但帮助写"上限" | `mergeToTargetCount` 未改；只加了 min-size 警告 | 修等大孤立分量兜底，或改文案并输出 max 违反警告 |
+| F-13 | A-33 只做了 0640，默认 `/tmp` 与 symlink 跟随仍在 | `TraceRecorder.java` 仍 `newBufferedWriter` 跟随链接、默认 `/tmp/monogomicro-trace.log`、无 `NOFOLLOW_LINKS` | 默认 `~/.monogomicro/`，`LinkOption.NOFOLLOW_LINKS` |
+| F-14 | `JsonIO.write` 对符号链接父目录 `/tmp` 失败 | `Files.createDirectories(Path.of("/tmp"))` 实测 `FileAlreadyExistsException`；`m2m partition -o /tmp` exit=2，错误只显示 `错误: /tmp` | parent 已存在时跳过 createDirectories（或 `isDirectory` 判断） |
+| F-15 | AGENTS.md 仍写 15 工具 / Q=0.81 / 71 单测+4 IT | `AGENTS.md:12,16,46`；当前 17 工具、Q=0.77、83 单测+5 IT | 同步会话注入文件（README 已同步） |
+| F-16 | 修复未提交 | `git status`：9 个 M + `ProjectScannerTypePositionTest` 未跟踪 | 按惯例提交并双推，提交信息英文 |
+| F-17 | 新回归测试仍缺关键路径 | 无 web 测试；A-04/A-11/A-12/A-15/A-24/F-02 都没有回归测试；`ProjectScannerTypePositionTest` 的 `LocalTarget`/`ThrowsTarget` 同时有 `new` 表达式，断言无法证明局部变量/throws 提取本身生效 | 每个 F 项配一条最小回归；把 local/throws fixture 改成唯一引用点 |
+
+## F.6 结论
+
+- 与附 E 相反：**0.3.0 的代码侧门禁仍未清除**。F-01（写盘逃逸）、F-02（生成服务仍会启动失败）、
+  F-03（Web 写接口全 403）是三条阻断项；F-04/F-05/F-06/F-07 是 P2 功能/数据问题。
+- 没有发现新的 P0；A-01/A-02（package/DataSource）主体修复有效，A-05/A-07(CLI)/A-10/A-16/A-19/A-23 也确实闭环。
+- 建议顺序：F-01/F-02/F-03（各一小修 + 回归）→ F-04/F-05/F-06/F-07 → F-08..F-17。
+  修完后再跑一次「真实 RuoYi 生成 → package → 启动到 DataSource」与「浏览器同源 POST」两条验收。

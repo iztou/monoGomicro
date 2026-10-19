@@ -172,6 +172,7 @@ public final class McpServerMain {
                                           com.fasterxml.jackson.databind.SerializerProvider sp)
                             throws java.io.IOException {
                         gen.writeStartObject();
+                        gen.writeStringField("jsonrpc", "2.0");
                         gen.writeObjectFieldStart("error");
                         var rpc = value.getJsonRpcError();
                         gen.writeNumberField("code", rpc == null ? -32603 : rpc.code());

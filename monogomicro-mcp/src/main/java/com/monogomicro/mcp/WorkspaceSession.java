@@ -61,6 +61,8 @@ final class WorkspaceSession {
     private Map<String, Integer> serviceOf = new LinkedHashMap<>();
     private Path projectDir;
     private Path workspaceRoot;
+    /** load 会话的输入文件（generate 的 outDir 不得包含它们——A-07）；analyze 会话为空 */
+    private List<Path> protectedInputs = List.of();
     /** 最近一次 analyze 的 classpath 解析状态（load 会话为 null） */
     private MavenClasspathResolver.ClasspathResult classpathResult;
     /** 已导入的业务用例（ingest_trace），compute_partition 时融合；重开会话清空 */
@@ -119,6 +121,7 @@ final class WorkspaceSession {
             // normalize 过的路径 startsWith 必假，save/generate 全部误报越界
             this.projectDir = projectDir.toAbsolutePath().normalize();
             this.workspaceRoot = this.projectDir.resolve("m2m-out");
+            this.protectedInputs = List.of(); // analyze 会话无输入文件（load 会话的残留要清掉）
             rebuildServiceIndex();
             this.state = State.ANALYZED;
             reopenDerived();
@@ -165,6 +168,12 @@ final class WorkspaceSession {
             this.partition = effective;
             this.projectDir = projectDir == null ? null : projectDir.toAbsolutePath().normalize();
             this.workspaceRoot = analysisPath.toAbsolutePath().normalize().getParent();
+            java.util.List<Path> inputs = new java.util.ArrayList<>();
+            inputs.add(analysisPath.toAbsolutePath().normalize());
+            if (partitionPath != null) {
+                inputs.add(partitionPath.toAbsolutePath().normalize());
+            }
+            this.protectedInputs = List.copyOf(inputs);
             this.classpathResult = null; // load 会话无 classpath 上下文
             rebuildServiceIndex();
             this.state = State.PARTITIONED;
@@ -367,7 +376,8 @@ final class WorkspaceSession {
                 PartitionResult generationInput = JsonIO.mapper().treeToValue(
                         JsonIO.mapper().valueToTree(partition), PartitionResult.class);
                 result = new MicroserviceGenerator(report, generationInput, effectiveProject)
-                        .generate(normalized, new GenerateOptions(dryRun, overwrite));
+                        .generate(normalized, new GenerateOptions(dryRun, overwrite)
+                                .protectedInputs(protectedInputs.toArray(new Path[0])));
             } catch (M2mException e) {
                 throw e; // E_OUTPUT_EXISTS 等结构化错误透传
             } catch (Exception e) {

@@ -157,8 +157,9 @@ public class ProjectScanner {
                     reportProgress(++parsedFiles);
                     ParseResult<CompilationUnit> result = parser.parse(file);
                     CompilationUnit cu = result.getResult().orElse(null);
-                    if (cu == null) {
-                        // A-15：语法错误文件不再静默丢弃——至少 WARN，且计数进入报告
+                    // F-05：JavaParser 对语法错误常走恢复路径（present CU + problems + 0 顶层类型），
+                    // 只判 cu==null 会漏掉最常见的错误形态——以 problems 非空为准
+                    if (cu == null || (!result.getProblems().isEmpty() && cu.getTypes().isEmpty())) {
                         parseFailures.add(file.toString());
                         log.warn("解析失败（计入 report.parseFailures）：{}：{}", file, result.getProblems());
                         continue;
@@ -313,11 +314,12 @@ public class ProjectScanner {
         });
         // A-16：类型位置覆盖缺口——record 组件、cast、instanceof 模式、catch 参数、
         // throws 声明、局部变量声明、方法引用（Foo::bar）
-        if (decl instanceof com.github.javaparser.ast.body.RecordDeclaration rec) {
-            rec.getParameters().forEach(p ->
-                    addTypeEdges(graph, from, p.getType(), unit, DependencyEdge.EdgeKind.FIELD,
-                            sample + " record 组件 " + p.getNameAsString()));
-        }
+        // record 常见于嵌套声明（外层是 class 时 instanceof 判断不到），必须 findAll 下钻；
+        // findAll 含自身，顶层就是 record 时也覆盖
+        decl.findAll(com.github.javaparser.ast.body.RecordDeclaration.class).forEach(rec ->
+                rec.getParameters().forEach(p ->
+                        addTypeEdges(graph, from, p.getType(), unit, DependencyEdge.EdgeKind.FIELD,
+                                sample + " record 组件 " + p.getNameAsString())));
         decl.findAll(com.github.javaparser.ast.expr.CastExpr.class).forEach(cast ->
                 addTypeEdges(graph, from, cast.getType(), unit, DependencyEdge.EdgeKind.PARAM_RETURN,
                         sample + " cast (" + cast.getType().asString() + ")"));
