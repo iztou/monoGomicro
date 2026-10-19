@@ -21,3 +21,4 @@ m2m-out/services/
 
 # ZCode 本地会话产物
 .zcode/
+.workbuddy/
