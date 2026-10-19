@@ -88,7 +88,7 @@ public final class ServicesConfig {
     /** 校验必填项，给出口径统一的业务错误。 */
     public void validate() {
         Set<String> names = new LinkedHashSet<>();
-        for (ServiceEntry s : services) {
+        for (ServiceEntry s : services == null ? List.<ServiceEntry>of() : services) {
             if (s.getName() == null || s.getName().isBlank()) {
                 throw new M2mException("E_BAD_SERVICES_JSON", "services[].name 不能为空", null);
             }
@@ -109,7 +109,7 @@ public final class ServicesConfig {
     Map<String, String> resolveModuleOwners(Set<String> moduleNames) {
         Map<String, String> owners = new LinkedHashMap<>();
         for (String module : moduleNames) {
-            for (ServiceEntry s : services) {
+            for (ServiceEntry s : services == null ? List.<ServiceEntry>of() : services) {
                 if (s.getModules().stream().anyMatch(p -> globMatch(p, module))) {
                     owners.put(module, s.getName());
                     break;
@@ -119,9 +119,9 @@ public final class ServicesConfig {
         return owners;
     }
 
-    /** module 是否被 exclude 命中。 */
+    /** module 是否被 exclude 命中（A-27：null 列表按空处理，不再裸 NPE）。 */
     boolean isExcluded(String module) {
-        return exclude.stream().anyMatch(p -> globMatch(p, module));
+        return exclude == null ? false : exclude.stream().anyMatch(p -> globMatch(p, module));
     }
 
     /** 极简 glob：{@code *} 匹配任意字符序列；无通配符时退化为精确匹配。 */

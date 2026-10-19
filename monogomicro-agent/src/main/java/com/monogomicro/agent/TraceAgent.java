@@ -33,7 +33,7 @@ public final class TraceAgent {
                     case "out" -> out = value;
                     case "entry" -> {
                         entryClass = value;
-                        entryMethod = "doDispatch";
+                        // A-34：entry 不能清掉用户已设置的 entryMethod（参数序依赖 bug）
                     }
                     case "entryMethod" -> entryMethod = value;
                     case "include" -> {
@@ -49,6 +49,11 @@ public final class TraceAgent {
         }
         if (includes.isEmpty()) {
             System.err.println("[monogomicro] 未配置 include 包前缀，agent 不插桩。示例：include=com.ruoyi.");
+            return;
+        }
+        if (entryClass == null || entryClass.isBlank()) {
+            // A-34：空 entry= 会 nameContains("") 匹配全部类型，织入面失控
+            System.err.println("[monogomicro] entry 类名为空，agent 不插桩（entry=DispatcherServlet 为常见值）");
             return;
         }
 
@@ -117,7 +122,7 @@ public final class TraceAgent {
 
     /** 业务用例入口边界 */
     public static class EntryAdvice {
-        @Advice.OnMethodEnter
+        @Advice.OnMethodEnter(suppress = Throwable.class)
         public static void enter(@Advice.Origin("#t") String type, @Advice.Origin("#m") String method) {
             TraceRecorder.record('E', type, method);
         }
@@ -125,14 +130,14 @@ public final class TraceAgent {
 
     /** 普通方法进出 */
     public static class MethodAdvice {
-        @Advice.OnMethodEnter
+        @Advice.OnMethodEnter(suppress = Throwable.class)
         public static void enter(@Advice.Origin("#t") String type, @Advice.Origin("#m") String method) {
             TraceRecorder.record('N', type, method);
         }
 
         // A-14：onThrowable 补齐异常路径——方法抛异常时默认 NoExceptionHandler 不执行 exit，
         // N 只压不弹导致调用栈永久错位、动态权重失真
-        @Advice.OnMethodExit(onThrowable = Throwable.class)
+        @Advice.OnMethodExit(onThrowable = Throwable.class, suppress = Throwable.class)
         public static void exit(@Advice.Origin("#t") String type, @Advice.Origin("#m") String method) {
             TraceRecorder.record('X', type, method);
         }

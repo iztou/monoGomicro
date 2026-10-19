@@ -54,7 +54,7 @@ public enum ClassStereotype {
         }
         if (pkg.contains(".domain.") || pkg.contains(".entity.") || pkg.contains(".model.")
                 || name.endsWith("domain") || name.endsWith("entity")
-                || (superClassName != null && superClassName.toLowerCase(Locale.ROOT).endsWith(".baseentity"))) {
+                || (superClassName != null && superClassName.toLowerCase(Locale.ROOT).endsWith(".BaseEntity"))) {
             return DOMAIN;
         }
         if (ann.contains("configuration") || name.endsWith("config") || name.endsWith("configuration")) {

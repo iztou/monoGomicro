@@ -52,6 +52,14 @@ public final class McpServerMain {
     private final WorkspaceSession session = new WorkspaceSession();
     private final McpTools tools = new McpTools(session);
 
+    /** --host/--port 的值缺失时给参数名而非数组越界。 */
+    private static String requireValue(String[] args, int index, String flag) {
+        if (index + 1 >= args.length) {
+            throw new IllegalArgumentException("参数 " + flag + " 缺少值（如 " + flag + " 127.0.0.1）");
+        }
+        return args[index + 1];
+    }
+
     /** 启动参数（--http / --host / --port），默认 stdio + 127.0.0.1:8082。 */
     record Options(boolean http, String host, int port) {
         static Options parse(String[] args) {
@@ -61,8 +69,8 @@ public final class McpServerMain {
             for (int i = 0; i < args.length; i++) {
                 switch (args[i]) {
                     case "--http" -> http = true;
-                    case "--host" -> host = args[++i];
-                    case "--port" -> port = Integer.parseInt(args[++i]);
+                    case "--host" -> host = requireValue(args, i++, "--host");
+                    case "--port" -> port = Integer.parseInt(requireValue(args, i++, "--port"));
                     default -> throw new IllegalArgumentException(
                             "未知参数：" + args[i] + "（支持 --http --host <h> --port <p>）");
                 }

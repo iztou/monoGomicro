@@ -27,7 +27,18 @@ public final class TraceRecorder {
         }
         running = true;
         Thread writer = new Thread(() -> {
-            try (BufferedWriter bw = Files.newBufferedWriter(Path.of(outFile), StandardCharsets.UTF_8)) {
+            try (BufferedWriter bw = java.nio.file.Files.newBufferedWriter(Path.of(outFile),
+                    StandardCharsets.UTF_8,
+                    java.nio.file.StandardOpenOption.CREATE,
+                    java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,
+                    java.nio.file.StandardOpenOption.WRITE)) {
+                // A-33：POSIX 0640——同机其他用户不可读（内部类名是信息）
+                try {
+                    java.nio.file.Files.setPosixFilePermissions(Path.of(outFile),
+                            java.nio.file.attribute.PosixFilePermissions.fromString("rw-r-----"));
+                } catch ( UnsupportedOperationException | IOException ignore ) {
+                    // 非 POSIX 文件系统（如 Windows）：跳过权限收紧
+                }
                 bw.write("# monoGomicro trace v1\n");
                 while (running || !QUEUE.isEmpty()) {
                     String line = QUEUE.poll(200, TimeUnit.MILLISECONDS);
@@ -41,7 +52,9 @@ public final class TraceRecorder {
                 }
                 bw.flush();
             } catch (IOException | InterruptedException e) {
-                System.err.println("[monogomicro] 轨迹写入失败: " + e);
+                // A-33：写失败必须停机——running=true 会静默吞掉后续全部轨迹
+                running = false;
+                System.err.println("[monogomicro] 轨迹写入失败，采集已停止（避免静默丢数据）: " + e);
             }
         }, "monogomicro-trace-writer");
         writer.setDaemon(true);

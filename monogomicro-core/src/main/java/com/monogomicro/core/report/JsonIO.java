@@ -15,6 +15,9 @@ public final class JsonIO {
 
     private static final ObjectMapper MAPPER = new ObjectMapper()
             .enable(SerializationFeature.INDENT_OUTPUT)
+            // A-24：非有限 double（NaN/Infinity）按规范写成 null token，而不是字符串 "NaN"
+            //（字符串会破坏 JSON number 契约——消费端拿到的类型随内容漂移）
+            .configure(com.fasterxml.jackson.core.JsonGenerator.Feature.QUOTE_NON_NUMERIC_NUMBERS, false)
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     private JsonIO() {

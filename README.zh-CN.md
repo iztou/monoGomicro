@@ -31,6 +31,7 @@ monogomicro-agent     运行时插桩 agent（ByteBuddy，premain）
 monogomicro-codegen   分区 → 微服务工程生成（源码改写）
 monogomicro-cli       m2m 命令行（analyze / partition / trace / generate）
 monogomicro-web       本地控制台（Spring Boot 薄 REST + D3 单页）
+monogomicro-mcp       MCP server（stdio + Streamable HTTP，17 工具）
 ```
 
 ## 安装
@@ -169,7 +170,7 @@ RuoYi-Cloud 实测（274 类 / 16 模块）：边界耦合率 **0.0000**——�
 | 阶段 | 结果 |
 |---|---|
 | analyze | 290 类注册 / 980 条加权依赖边 / 92 依赖 jar 自动解析 |
-| partition | 模度 Q=0.81，12 个服务，跨服务通信占比 ~15% |
+| partition | 模度 Q=0.77，12 个服务，边界耦合率 ~20%（编译期依赖口径） |
 | 已知边界恢复 | ruoyi-quartz → job 服务（16/19 类）、ruoyi-generator → table 服务、system 各功能域切成 user/role/post/dict 等垂直切片 |
 | generate | 12 服务 + common 共享内核 / 16 组 RPC 桥 / 13 处注入自动改写 / 21 个 mapper XML 迁移 |
 | 验收 | **生成工程 `mvn compile` 通过**，残余 4 项列入 MIGRATION.md |

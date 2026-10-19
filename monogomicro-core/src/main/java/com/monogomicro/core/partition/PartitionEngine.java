@@ -44,6 +44,7 @@ public class PartitionEngine {
     }
 
     public PartitionResult run() {
+        options.validate(); // A-28：非法参数在这里统一拦截
         Map<String, Map<String, Long>> staticSym = graph.symmetrized();
         Map<String, Map<String, Long>> dynamicSym = new TraceAnalyzer().dynamicWeights(useCases);
         Map<String, Map<String, Long>> fused = fuse(staticSym, dynamicSym);

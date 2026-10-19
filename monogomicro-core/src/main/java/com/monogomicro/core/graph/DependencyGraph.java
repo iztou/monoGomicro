@@ -113,9 +113,12 @@ public class DependencyGraph {
             sym.put(n, new LinkedHashMap<>());
         }
         forEach(e -> {
+            // A-26：analysis.json 是可编辑输入，未注册端点不再 NPE——按需建占位节点
             long w = e.getWeight();
-            sym.get(e.getFrom()).merge(e.getTo(), w, Long::sum);
-            sym.get(e.getTo()).merge(e.getFrom(), w, Long::sum);
+            sym.computeIfAbsent(e.getFrom(), k -> new LinkedHashMap<>())
+                    .merge(e.getTo(), w, Long::sum);
+            sym.computeIfAbsent(e.getTo(), k -> new LinkedHashMap<>())
+                    .merge(e.getFrom(), w, Long::sum);
         });
         return sym;
     }

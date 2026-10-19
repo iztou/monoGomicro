@@ -150,7 +150,7 @@ public class MicroserviceGenerator {
         String clientDirSegment = "/src/main/java/" + basePackage.replace('.', '/') + "/client/";
         java.util.Map<String, Path> byName = new java.util.LinkedHashMap<>();
         List<Path> copies = new ArrayList<>();
-        try (var walk = Files.walk(outDir, 8)) {
+        try (var walk = Files.walk(outDir, 12)) {
             walk.filter(p -> p.toString().contains(clientDirSegment)
                             && p.toString().endsWith(".java"))
                 .forEach(p -> {
@@ -270,6 +270,19 @@ public class MicroserviceGenerator {
             // A-07：-o 指向普通文件曾绕过 isNonEmptyDir 后被删除
             throw new M2mException("E_BAD_OUT_DIR", "输出路径已存在且不是目录：" + outDir,
                     "生成输出必须是目录；该位置已有文件，请更换输出目录");
+        }
+        // A-20：符号链接穿透——文本 normalize 比较看不出中间 symlink 指向项目，
+        // toRealPath 解析链接后再比对；同时拒绝删除项目的源码树本身
+        try {
+            Path realOut = Files.exists(outDir) ? outDir.toRealPath() : outDir.toRealPath().getParent();
+            Path realProject = project.toAbsolutePath().normalize().toRealPath();
+            if (realProject.startsWith(realOut) || realOut.startsWith(realProject.resolve("src"))) {
+                throw new M2mException("E_BAD_OUT_DIR",
+                        "输出目录（经符号链接解析后）指向原项目或其源码树：" + realOut,
+                        "更换输出目录；符号链接路径不会被用作清空目标");
+            }
+        } catch (java.io.IOException resolveFailed) {
+            // 解析失败（含目标不存在）：上面的 normalize 守卫已覆盖主路径，这里不放大异常
         }
     }
 

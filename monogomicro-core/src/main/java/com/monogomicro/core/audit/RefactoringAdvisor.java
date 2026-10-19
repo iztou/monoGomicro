@@ -160,7 +160,9 @@ public final class RefactoringAdvisor {
         /** 参考分区参数（可复现性）。 */
         private Map<String, Object> referencePartition = new LinkedHashMap<>();
         private String disclaimer = "参考分区是参照物不是真理：历史包袱、团队边界、发布节奏都是算法看不见的约束。"
-                + "delta 变差的条目（worsened=true）往往揭示这类约束，请人工判断。";
+                + "delta 变差的条目（worsened=true）往往揭示这类约束，请人工判断。"
+                + "注意：每条 move 的 delta 是独立沙盘（单独执行该移动的效果），"
+                + "多条 move 合并执行的实际收益不可简单相加。";
 
         public List<MoveSuggestion> getMoves() {
             return moves;

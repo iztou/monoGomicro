@@ -35,6 +35,7 @@ monogomicro-agent     runtime instrumentation agent (ByteBuddy, premain)
 monogomicro-codegen   partition → microservice project generation (source rewriting)
 monogomicro-cli       the m2m CLI (analyze / partition / trace / generate)
 monogomicro-web       local console (thin Spring Boot REST + D3 single page)
+monogomicro-mcp       MCP server (stdio + Streamable HTTP, 17 tools)
 ```
 
 ## Install
@@ -181,7 +182,7 @@ shared-lib abuse findings (StringUtils etc. depended on by 6/7 services) all che
 | Stage | Result |
 |---|---|
 | analyze | 290 classes / 980 weighted dependency edges / 92 dependency jars auto-resolved |
-| partition | modularity Q=0.81, 12 services, ~15% cross-service communication |
+| partition | modularity Q=0.77, 12 services, ~20% boundary coupling (compile-time view) |
 | known boundaries recovered | ruoyi-quartz → job service (16/19 classes), ruoyi-generator → table service, system module split into user/role/post/dict vertical slices |
 | generate | 12 services + shared common kernel / 16 RPC bridges / 13 injections rewritten / 21 mapper XMLs migrated |
 | acceptance | **generated projects pass `mvn compile`**; 4 residual items listed in MIGRATION.md |

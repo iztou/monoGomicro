@@ -172,7 +172,22 @@ public class AnnealingRefiner {
         if (counted == 0) {
             return 0;
         }
+        // A-37：归一化分母用"实际被用到的社区数 - 1"——k 含空槽时刻度虚高，
+        // 公共 API 直接调用（生产路径已 renumber）时偏好带空洞的分组
+        java.util.Set<Integer> used = new java.util.HashSet<>();
+        for (UseCase uc : useCases) {
+            for (String cls : uc.getClasses()) {
+                Integer c = labels.get(cls);
+                if (c != null) {
+                    used.add(c);
+                }
+            }
+        }
+        int denom = used.size() - 1;
+        if (denom <= 0) {
+            return 0;
+        }
         double avgSpan = sum / counted;
-        return Math.max(0, Math.min(1, (avgSpan - 1) / (k - 1)));
+        return Math.max(0, Math.min(1, (avgSpan - 1) / denom));
     }
 }
