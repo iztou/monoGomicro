@@ -36,7 +36,8 @@ public class RpcBridgeGenerator {
             "Character", "Number", "StringBuilder", "StringBuffer", "Math", "System", "Class",
             "Enum", "Throwable", "Exception", "RuntimeException", "Override", "SuppressWarnings",
             "Deprecated", "SafeVarargs", "void", "int", "long", "double", "float", "boolean",
-            "byte", "short", "char");
+            "byte", "short", "char", "Iterable", "Comparable", "Void", "CharSequence", "Runnable",
+            "Record", "Cloneable", "AutoCloseable", "Thread");
 
     /** 已知 JDK 类型 → 需要补的 import（白名单；不在表内的未知类型不再放行——R-08） */
     private static final Map<String, String> KNOWN_JDK_IMPORTS = Map.ofEntries(
@@ -56,7 +57,26 @@ public class RpcBridgeGenerator {
             Map.entry("LocalDateTime", "java.time.LocalDateTime"),
             Map.entry("LocalTime", "java.time.LocalTime"),
             Map.entry("Instant", "java.time.Instant"),
-            Map.entry("Duration", "java.time.Duration"));
+            Map.entry("Duration", "java.time.Duration"),
+            Map.entry("Stream", "java.util.stream.Stream"),
+            Map.entry("Collectors", "java.util.stream.Collectors"),
+            Map.entry("Objects", "java.util.Objects"),
+            Map.entry("Arrays", "java.util.Arrays"),
+            Map.entry("Collections", "java.util.Collections"),
+            Map.entry("LinkedList", "java.util.LinkedList"),
+            Map.entry("Timestamp", "java.sql.Timestamp"),
+            Map.entry("Time", "java.sql.Time"),
+            Map.entry("SQLException", "java.sql.SQLException"),
+            Map.entry("File", "java.io.File"),
+            Map.entry("InputStream", "java.io.InputStream"),
+            Map.entry("OutputStream", "java.io.OutputStream"),
+            Map.entry("IOException", "java.io.IOException"),
+            Map.entry("Pattern", "java.util.regex.Pattern"),
+            Map.entry("Matcher", "java.util.regex.Matcher"),
+            Map.entry("TimeZone", "java.util.TimeZone"),
+            Map.entry("SimpleDateFormat", "java.text.SimpleDateFormat"),
+            Map.entry("Calendar", "java.util.Calendar"),
+            Map.entry("Entry", "java.util.Map.Entry"));
 
     /** 一次跨服务注入的完整描述 */
     public static class BridgeRequest {
@@ -118,13 +138,15 @@ public class RpcBridgeGenerator {
         consumerScope.add(req.consumerService);
         consumerScope.add("common");
         List<MethodSig> clientMethods = new ArrayList<>();
+        int typeSkippedConsumer = 0;
         for (MethodSig m : methods) {
             Set<String> bad = unreachableTypes(m, consumerScope);
             if (bad.isEmpty()) {
                 clientMethods.add(m);
             } else {
+                typeSkippedConsumer++;
                 manualItems.add("方法 " + providerSimple + "." + m.name()
-                        + " 的签名类型在消费端不可达或无法识别 " + bad + "，未生成客户端方法（服务 "
+                        + " 的签名类型在消费端不可达或无法识别 " + bad + "（服务 "
                         + req.consumerService + "）");
             }
         }
@@ -132,37 +154,51 @@ public class RpcBridgeGenerator {
         providerScope.add(req.providerService);
         providerScope.add("common");
         List<MethodSig> serverMethods = new ArrayList<>();
+        int typeSkippedProvider = 0;
         for (MethodSig m : methods) {
             Set<String> bad = unreachableTypes(m, providerScope);
             if (bad.isEmpty()) {
                 serverMethods.add(m);
             } else {
-                manualItems.add("方法 " + providerSimple + "." + m.name()
-                        + " 的签名类型在提供端不可达或无法识别 " + bad + "，未生成 RPC 端点（服务 "
-                        + req.providerService + "）");
+                typeSkippedProvider++;
             }
         }
 
-        // 重载冲突（R-08）：桥端方法统一为 name(Map body) 签名 + @PostMapping("/name")，
-        // 同名重载会产生重复方法与重复路由——同名只保留首个，其余进人工项
-        clientMethods = dedupeOverloads(clientMethods, providerSimple, "客户端方法");
-        serverMethods = dedupeOverloads(serverMethods, providerSimple, "RPC 端点");
+        // A-08 失败策略：任一侧存在"类型不可达"的被跳过方法时，无法给出可编译的镜像签名，
+        // 整对不改写注入（消费端保留原引用并记人工项），绝不生成编译不过的代码
+        boolean consumerBlocked = typeSkippedConsumer > 0;
+        boolean providerBlocked = typeSkippedProvider > 0;
+        if (consumerBlocked || providerBlocked) {
+            manualItems.add("接口 " + providerSimple + "（服务 " + req.providerService + "）存在签名类型"
+                    + "不可达的方法，未生成 RPC 桥、未改写消费端注入（保持原引用可读但编译需人工："
+                    + "把相关类型提升进 common，或手工实现桥接）");
+            return false;
+        }
 
-        writeClient(req, providerSimple, clientMethods, consumerSrcRoot, basePackage);
+        // 重载冲突（R-08）：桥端方法统一为 name(Map body) 签名 + @PostMapping("/name")，
+        // 同名重载会产生重复方法与重复路由——同名只保留首个，其余生成保底 stub
+        // （A-08：stub 抛 UnsupportedOperationException，编译永远通过，调用时明确失败而非编译失败）
+        List<MethodSig> clientStubs = new ArrayList<>();
+        clientMethods = dedupeOverloads(clientMethods, clientStubs);
+        serverMethods = dedupeOverloads(serverMethods, null);
+
+        writeClient(req, providerSimple, clientMethods, clientStubs, consumerSrcRoot, basePackage);
         writeController(req, providerSimple, serverMethods, providerSrcRoot, basePackage);
-        return !clientMethods.isEmpty() || !serverMethods.isEmpty();
+        return !clientMethods.isEmpty() || !serverMethods.isEmpty() || !clientStubs.isEmpty();
     }
 
-    /** 同名方法只保留首个（重载在桥端无法区分路由），其余记录人工项 */
-    private List<MethodSig> dedupeOverloads(List<MethodSig> methods, String providerSimple, String side) {
+
+    /** 同名方法只保留首个（重载在桥端无法按名路由），其余记人工项；stubs 非空时收集为保底签名 */
+    private List<MethodSig> dedupeOverloads(List<MethodSig> methods, List<MethodSig> stubs) {
         Set<String> seen = new HashSet<>();
         List<MethodSig> kept = new ArrayList<>();
         for (MethodSig m : methods) {
             if (seen.add(m.name())) {
                 kept.add(m);
-            } else {
-                manualItems.add("接口 " + providerSimple + " 存在重载方法 " + m.name()
-                        + "，桥端无法按名路由，重载变体未生成" + side + "，需人工桥接");
+            } else if (stubs != null) {
+                stubs.add(m);
+                manualItems.add("重载方法 " + m.name() + " 的额外变体生成保底 stub"
+                        + "（调用时抛 UnsupportedOperationException），需人工按参数区分桥接");
             }
         }
         return kept;
@@ -179,8 +215,10 @@ public class RpcBridgeGenerator {
         for (String name : names) {
             String fqcn = simpleNameToFqcn.get(name);
             if (fqcn == null) {
-                // 非项目类型：仅已知 JDK 类型放行；其余不再赌它能编译（R-08）
-                if (!JAVA_LANG.contains(name) && !KNOWN_JDK_IMPORTS.containsKey(name)) {
+                // 非项目类型：仅已知 JDK 类型与单字母类型变量（T/E/K/V，声明侧泛形）放行；
+                // 其余不再赌它能编译（R-08）——类型变量的镜像签名两端一致，编译可行
+                boolean typeVar = name.length() == 1 && Character.isUpperCase(name.charAt(0));
+                if (!typeVar && !JAVA_LANG.contains(name) && !KNOWN_JDK_IMPORTS.containsKey(name)) {
                     bad.add(name);
                 }
                 continue;
@@ -194,18 +232,32 @@ public class RpcBridgeGenerator {
     }
 
     /** 从类型字符串提取标识符（含泛型参数；跳过限定名中 '.' 之后的段，如 Map.Entry 的 Entry） */
+    /** 通配/泛型关键字：不是类型引用（A-09：曾把 extends 当类型丢弃整方法） */
+    private static final Set<String> NON_TYPE_KEYWORDS =
+            Set.of("extends", "super", "final");
+
     private void collectNames(String type, Set<String> names) {
         java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("[A-Za-z_][A-Za-z0-9_]*").matcher(type);
+        String lastQualified = null; // 限定名的最后一段才是类型简单名（A-09：com.foo.Bar 只取 Bar）
+        int lastQualifiedEnd = -1;
         while (matcher.find()) {
             if (matcher.start() > 0 && type.charAt(matcher.start() - 1) == '.') {
-                continue; // 限定名的成员段，不是独立类型引用
+                lastQualified = matcher.group();
+                lastQualifiedEnd = matcher.end();
+                continue; // 限定名的成员段——最后一段会在下方统一补收
             }
-            names.add(matcher.group());
+            String token = matcher.group();
+            if (!NON_TYPE_KEYWORDS.contains(token)) {
+                names.add(token);
+            }
+        }
+        if (lastQualified != null && !NON_TYPE_KEYWORDS.contains(lastQualified)) {
+            names.add(lastQualified);
         }
     }
 
     private void writeClient(BridgeRequest req, String providerSimple, List<MethodSig> methods,
-                             Path srcRoot, String basePackage) throws IOException {
+                             List<MethodSig> stubs, Path srcRoot, String basePackage) throws IOException {
         String pkg = basePackage + ".client";
         Set<String> imports = new TreeSet<>();
         imports.add("org.springframework.beans.factory.annotation.Value");
@@ -214,12 +266,19 @@ public class RpcBridgeGenerator {
         for (var m : methods) {
             collectImports(m, imports);
         }
+        for (var m : stubs) {
+            collectImports(m, imports); // stub 签名同样需要类型可达
+        }
         StringBuilder sb = new StringBuilder();
         sb.append("// 由 monoGomicro 生成的跨服务客户端，替代原本地服务注入\n");
         sb.append("package ").append(pkg).append(";\n\n");
         emitImports(imports, sb);
         sb.append("\npublic interface ").append(providerSimple).append("Client {\n");
         for (var m : methods) {
+            sb.append("    ").append(m.returnType()).append(" ").append(m.name()).append("(")
+                    .append(paramsDecl(m)).append(");\n");
+        }
+        for (var m : stubs) {
             sb.append("    ").append(m.returnType()).append(" ").append(m.name()).append("(")
                     .append(paramsDecl(m)).append(");\n");
         }
@@ -237,6 +296,14 @@ public class RpcBridgeGenerator {
         impl.append("    private String baseUrl;\n\n");
         for (var m : methods) {
             emitClientMethod(impl, m, providerSimple);
+        }
+        for (var m : stubs) {
+            // A-08 保底：编译通过，调用时明确失败（优于生成编译不过的代码）
+            impl.append("    @Override\n    public ").append(m.returnType()).append(" ")
+                    .append(m.name()).append("(").append(paramsDecl(m)).append(") {\n")
+                    .append("        throw new UnsupportedOperationException(\"")
+                    .append(m.name()).append(" 的重载变体无法按名自动桥接，需人工实现\");\n")
+                    .append("    }\n");
         }
         impl.append("}\n");
         write(srcRoot.resolve(pkg.replace('.', '/') + "/" + providerSimple + "Client.java"), sb.toString());

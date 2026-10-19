@@ -82,6 +82,8 @@ public class ProjectScanner {
 
     /** 进度回调节流间隔（文件数）。 */
     private static final int PROGRESS_EVERY = 50;
+    /** A-15：解析失败的源文件（计数上报，避免"成功但缺类"的静默偏差） */
+    private final java.util.List<String> parseFailures = new java.util.ArrayList<>();
 
     public void setProgressListener(java.util.function.IntConsumer progressListener) {
         this.progressListener = progressListener;
@@ -96,6 +98,11 @@ public class ProjectScanner {
     /** 最近一次 scan 的 classpath 解析结果；useMavenClasspath=false 或尚未 scan 时为 null。 */
     public MavenClasspathResolver.ClasspathResult classpathResult() {
         return classpathResult;
+    }
+
+    /** A-15：本轮扫描中解析失败的源文件（生成报告时写入 AnalysisReport.parseFailures）。 */
+    public List<String> parseFailures() {
+        return List.copyOf(parseFailures);
     }
 
     public DependencyGraph scan(Path projectDir) throws IOException {
@@ -151,7 +158,9 @@ public class ProjectScanner {
                     ParseResult<CompilationUnit> result = parser.parse(file);
                     CompilationUnit cu = result.getResult().orElse(null);
                     if (cu == null) {
-                        log.debug("解析失败 {}：{}", file, result.getProblems());
+                        // A-15：语法错误文件不再静默丢弃——至少 WARN，且计数进入报告
+                        parseFailures.add(file.toString());
+                        log.warn("解析失败（计入 report.parseFailures）：{}：{}", file, result.getProblems());
                         continue;
                     }
                     String pkg = cu.getPackageDeclaration().map(p -> p.getNameAsString()).orElse("");
@@ -301,6 +310,43 @@ public class ProjectScanner {
         decl.findAll(NameExpr.class).forEach(nameExpr -> {
             addEdge(graph, from, resolveName(nameExpr.getNameAsString()), DependencyEdge.EdgeKind.METHOD_CALL,
                     sample + " 引用 " + nameExpr.getNameAsString());
+        });
+        // A-16：类型位置覆盖缺口——record 组件、cast、instanceof 模式、catch 参数、
+        // throws 声明、局部变量声明、方法引用（Foo::bar）
+        if (decl instanceof com.github.javaparser.ast.body.RecordDeclaration rec) {
+            rec.getParameters().forEach(p ->
+                    addTypeEdges(graph, from, p.getType(), unit, DependencyEdge.EdgeKind.FIELD,
+                            sample + " record 组件 " + p.getNameAsString()));
+        }
+        decl.findAll(com.github.javaparser.ast.expr.CastExpr.class).forEach(cast ->
+                addTypeEdges(graph, from, cast.getType(), unit, DependencyEdge.EdgeKind.PARAM_RETURN,
+                        sample + " cast (" + cast.getType().asString() + ")"));
+        decl.findAll(com.github.javaparser.ast.expr.InstanceOfExpr.class).forEach(io ->
+                addTypeEdges(graph, from, io.getType(), unit, DependencyEdge.EdgeKind.PARAM_RETURN,
+                        sample + " instanceof " + io.getType().asString()));
+        decl.findAll(com.github.javaparser.ast.stmt.CatchClause.class).forEach(cc ->
+                addTypeEdges(graph, from, cc.getParameter().getType(), unit, DependencyEdge.EdgeKind.PARAM_RETURN,
+                        sample + " catch " + cc.getParameter().getType().asString()));
+        decl.findAll(com.github.javaparser.ast.body.MethodDeclaration.class).forEach(m ->
+                m.getThrownExceptions().forEach(t -> {
+                    Type tt = t; // ClassOrInterfaceType 的 erasure 视图
+                    addTypeEdges(graph, from, tt, unit, DependencyEdge.EdgeKind.PARAM_RETURN,
+                            sample + " throws " + tt.asString());
+                }));
+        decl.findAll(com.github.javaparser.ast.body.VariableDeclarator.class).forEach(v -> {
+            if (v.getParentNode().map(p -> p instanceof com.github.javaparser.ast.expr.VariableDeclarationExpr)
+                    .orElse(false)) {
+                addTypeEdges(graph, from, v.getType(), unit, DependencyEdge.EdgeKind.PARAM_RETURN,
+                        sample + " 局部变量 " + v.getNameAsString());
+            }
+        });
+        decl.findAll(com.github.javaparser.ast.expr.MethodReferenceExpr.class).forEach(ref -> {
+            // Foo::bar 的 Foo 部分是类型引用（只处理纯标识符形态的 scope）
+            String scope = ref.getScope().toString();
+            if (scope.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+                addEdge(graph, from, resolveName(scope), DependencyEdge.EdgeKind.METHOD_CALL,
+                        sample + " 方法引用 " + scope + "::" + ref.getIdentifier());
+            }
         });
     }
 

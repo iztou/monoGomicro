@@ -87,6 +87,11 @@ public final class Main implements Callable<Integer> {
             report.setScannedAt(LocalDateTime.now().toString());
             report.setPackagePrefixes(packagePrefixes);
             report.setClasses(List.copyOf(graph.nodes()));
+            report.setParseFailures(scanner.parseFailures());
+            if (!report.getParseFailures().isEmpty()) {
+                System.out.printf("警告：%d 个源文件解析失败（语法错误），已跳过：首例 %s%n",
+                        report.getParseFailures().size(), report.getParseFailures().get(0));
+            }
             report.setEdges(graph.edges());
             JsonIO.write(report, out.resolve("analysis.json"));
             new ConsoleReporter(System.out).reportAnalysis(report);
@@ -146,6 +151,17 @@ public final class Main implements Callable<Integer> {
             options.validate();
 
             PartitionResult result = new PartitionEngine(report.toGraph(), useCases, options).run();
+            // A-22：min/max 是软约束（孤立无邻居的小社区无法并入）——违反时明确提示，不静默
+            long undersized = result.getCommunities().stream()
+                    .filter(c -> c.getClasses().size() < minSize).count();
+            if (undersized > 0) {
+                System.out.printf("提示：%d 个服务低于 --min-size=%d（软约束：孤立/无连接社区无法并入，详见分区结果）%n",
+                        undersized, minSize);
+            }
+            if (result.getCommunities().size() > maxServices) {
+                System.out.printf("提示：服务数 %d 超过 --max-services=%d（软约束：等大孤立分量无法再合并）%n",
+                        result.getCommunities().size(), maxServices);
+            }
             JsonIO.write(result, out.resolve("partition.json"));
             new ConsoleReporter(System.out).reportPartition(result);
             System.out.println("已写入 " + out.resolve("partition.json").toAbsolutePath());

@@ -210,15 +210,34 @@ async function save() {
   } catch (e) { toast('保存失败'); }
 }
 
-async function generate() {
+async function generate(overwrite) {
   if (!projectDir.value.trim() || !outDir.value.trim()) {
     toast('projectDir 与 outDir 必填（outDir 将被清空重建，禁止留空）');
     return;
   }
+  // A-12：首次调用不覆盖；目录非空报 E_OUTPUT_EXISTS 后由用户确认再以 overwrite=true 重试
+  if (overwrite !== true) {
+    try {
+      return await doGenerate(false);
+    } catch (e) {
+      if (String(e.message).includes('E_OUTPUT_EXISTS') || String(e.message).includes('已存在且非空')) {
+        if (confirm('目标目录已存在且非空：\n' + outDir.value + '\n确认清空重建？')) {
+          return await doGenerate(true);
+        }
+        genResult.textContent = '已取消（目标目录未改动）';
+        return;
+      }
+      throw e;
+    }
+  }
+  return await doGenerate(true);
+}
+
+async function doGenerate(overwrite) {
   genResult.textContent = '生成中…';
   try {
     const r = await api('/api/generate',
-        {projectDir: projectDir.value, outDir: outDir.value, overwrite: true});
+        {projectDir: projectDir.value, outDir: outDir.value, overwrite: overwrite});
     genResult.textContent = r.summary + '\n\n需人工处理 ' + r.manualItems.length + ' 项（详见 MIGRATION.md）';
     toast('生成完成');
   } catch (e) { genResult.textContent = '失败：' + e.message; }

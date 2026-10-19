@@ -945,7 +945,9 @@ public class MicroserviceGenerator {
         sb.append("                <groupId>org.apache.maven.plugins</groupId>\n");
         sb.append("                <artifactId>maven-compiler-plugin</artifactId>\n");
         sb.append("                <version>3.13.0</version>\n");
-        sb.append("                <configuration><parameters>true</parameters></configuration>\n");
+        // A-18：固定编译级别——插件默认 1.8，原单体用 record/var/text block 时生成工程编译失败
+        sb.append("                <configuration><parameters>true</parameters><release>")
+                .append(compilerRelease()).append("</release></configuration>\n");
         sb.append("            </plugin>\n");
         if (bootPlugin) {
             String pluginVersion = springBootPluginVersion();
@@ -975,6 +977,17 @@ public class MicroserviceGenerator {
     }
 
     /** 插件版本取原项目属性表或 BOM 导入里的 spring-boot 版本 */
+    /** A-18：编译级别取原项目 maven.compiler.release/java.version 属性，缺省 17。 */
+    private String compilerRelease() {
+        for (String key : List.of("maven.compiler.release", "java.version")) {
+            String v = pomReader.properties().get(key);
+            if (v != null && v.matches("[0-9]+")) {
+                return v;
+            }
+        }
+        return "17";
+    }
+
     private String springBootPluginVersion() {
         for (var e : pomReader.properties().entrySet()) {
             if (e.getKey().toLowerCase().contains("spring-boot") && e.getKey().toLowerCase().contains("version")) {

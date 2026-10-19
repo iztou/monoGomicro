@@ -22,6 +22,7 @@ public class AnalysisReport {
     private List<ClassInfo> classes = new ArrayList<>();
     private List<DependencyEdge> edges = new ArrayList<>();
     private List<String> mavenModules;
+    private List<String> parseFailures;
 
     public int getFormatVersion() { return formatVersion; }
     public void setFormatVersion(int formatVersion) { this.formatVersion = formatVersion; }
@@ -35,6 +36,10 @@ public class AnalysisReport {
     public void setClasses(List<ClassInfo> classes) { this.classes = classes; }
     public List<DependencyEdge> getEdges() { return edges; }
     public void setEdges(List<DependencyEdge> edges) { this.edges = edges; }
+
+    /** A-15：解析失败的源文件路径（语法错误不再静默丢弃；旧文件缺失时默认空表）。 */
+    public List<String> getParseFailures() { return parseFailures == null ? List.of() : parseFailures; }
+    public void setParseFailures(List<String> parseFailures) { this.parseFailures = parseFailures; }
 
     /** Maven 模块清单（v1 旧文件缺失时由 classes 惰性聚合，自愈兼容）。 */
     public List<String> getMavenModules() {

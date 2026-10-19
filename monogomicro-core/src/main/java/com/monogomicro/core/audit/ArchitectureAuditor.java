@@ -355,7 +355,8 @@ public final class ArchitectureAuditor {
                                                          Map<String, Set<String>> sharedFaninServices,
                                                          int businessCount, AuditConfig cfg) {
         List<AuditReport.Finding> out = new ArrayList<>();
-        if (businessCount == 0 || sharedSvcs.isEmpty()) {
+        // A-23：业务服务 < 3 时"扇入 ≥ 半数"是同义反复（1/1、2/2 全部误报 warning）
+        if (businessCount < 3 || sharedSvcs.isEmpty()) {
             return out;
         }
         int half = (businessCount + 1) / 2;

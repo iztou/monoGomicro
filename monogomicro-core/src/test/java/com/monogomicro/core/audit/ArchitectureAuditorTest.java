@@ -133,14 +133,26 @@ class ArchitectureAuditorTest {
 
     @Test
     void detectsSharedAbuseWithAllServicesWarning() {
+        // A-23 后业务服务 < 3 不再报 sharedAbuse（1/1、2/2 是同义反复）——本测试用 3 服务
+        Fixture f = new Fixture().svc("svcA", 3).svc("svcB", 3).svc("svcC", 3).svc("common", 2, true)
+                .edge("svcA", 0, "common", 0, 2)
+                .edge("svcB", 0, "common", 0, 2)
+                .edge("svcC", 0, "common", 0, 2);
+        AuditReport r = ArchitectureAuditor.audit(f.graph, f.landscape());
+        List<AuditReport.Finding> abuse = findings(r, "sharedAbuse");
+        assertEquals(1, abuse.size());
+        assertEquals("warning", abuse.get(0).getSeverity()); // 3/3 全部业务服务
+        assertEquals(f.cls("common", 0), abuse.get(0).getClasses().get(0));
+    }
+
+    @Test
+    void sharedAbuseSkippedWhenFewerThanThreeBusinessServices() {
+        // A-23 回归：1/2 个业务服务时"被全部依赖"无信息量，不应报
         Fixture f = new Fixture().svc("svcA", 3).svc("svcB", 3).svc("common", 2, true)
                 .edge("svcA", 0, "common", 0, 2)
                 .edge("svcB", 0, "common", 0, 2);
         AuditReport r = ArchitectureAuditor.audit(f.graph, f.landscape());
-        List<AuditReport.Finding> abuse = findings(r, "sharedAbuse");
-        assertEquals(1, abuse.size());
-        assertEquals("warning", abuse.get(0).getSeverity()); // 2/2 全部业务服务
-        assertEquals(f.cls("common", 0), abuse.get(0).getClasses().get(0));
+        assertEquals(0, findings(r, "sharedAbuse").size());
     }
 
     @Test

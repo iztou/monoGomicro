@@ -130,7 +130,9 @@ public final class TraceAgent {
             TraceRecorder.record('N', type, method);
         }
 
-        @Advice.OnMethodExit
+        // A-14：onThrowable 补齐异常路径——方法抛异常时默认 NoExceptionHandler 不执行 exit，
+        // N 只压不弹导致调用栈永久错位、动态权重失真
+        @Advice.OnMethodExit(onThrowable = Throwable.class)
         public static void exit(@Advice.Origin("#t") String type, @Advice.Origin("#m") String method) {
             TraceRecorder.record('X', type, method);
         }

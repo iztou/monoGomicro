@@ -110,11 +110,14 @@ final class WorkspaceSession {
             fresh.setPackagePrefixes(List.copyOf(packagePrefixes));
             fresh.setClasses(List.copyOf(scanned.nodes()));
             fresh.setEdges(List.copyOf(scanned.edges()));
+            fresh.setParseFailures(scanner.parseFailures());
 
             this.report = fresh;
             this.graph = scanned;
             this.partition = null;
-            this.projectDir = projectDir.toAbsolutePath();
+            // A-10：必须 normalize——"./proj" 保留在 workspaceRoot 里会让后续所有
+            // normalize 过的路径 startsWith 必假，save/generate 全部误报越界
+            this.projectDir = projectDir.toAbsolutePath().normalize();
             this.workspaceRoot = this.projectDir.resolve("m2m-out");
             rebuildServiceIndex();
             this.state = State.ANALYZED;
@@ -160,8 +163,8 @@ final class WorkspaceSession {
             this.report = loaded;
             this.graph = loadedGraph;
             this.partition = effective;
-            this.projectDir = projectDir == null ? null : projectDir.toAbsolutePath();
-            this.workspaceRoot = analysisPath.toAbsolutePath().getParent();
+            this.projectDir = projectDir == null ? null : projectDir.toAbsolutePath().normalize();
+            this.workspaceRoot = analysisPath.toAbsolutePath().normalize().getParent();
             this.classpathResult = null; // load 会话无 classpath 上下文
             rebuildServiceIndex();
             this.state = State.PARTITIONED;

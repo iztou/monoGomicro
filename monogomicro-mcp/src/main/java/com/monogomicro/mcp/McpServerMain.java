@@ -96,7 +96,9 @@ public final class McpServerMain {
                 HttpServletStreamableServerTransportProvider.builder()
                         // 协议通道必须用紧凑 mapper：INDENT_OUTPUT 的多行 JSON 会让 SSE 的
                         // data: 载荷跨行，产生非法 SSE（标准客户端只取到 "{"）
-                        .jsonMapper(new JacksonMcpJsonMapper(JsonIO.compactMapper()))
+                        // A-13：McpError 不能走 Java 异常序列化（泄露 SDK/Jetty 堆栈行号），
+                        // 序列化为 JSON-RPC error envelope
+                        .jsonMapper(new JacksonMcpJsonMapper(errorSafeMapper()))
                         .mcpEndpoint("/mcp")
                         .keepAliveInterval(Duration.ofSeconds(30))
                         // 本地/内网服务防 DNS rebinding：Host 头必须是监听地址或 loopback
@@ -147,6 +149,33 @@ public final class McpServerMain {
         return spec.serverInfo("monogomicro", com.monogomicro.core.Versions.get())
                 .tools(mcp.toolSpecs())
                 .resources(mcp.resourceSpecs());
+    }
+
+    /** 紧凑 mapper + McpError 定制序列化（只输出 JSON-RPC error 字段，无堆栈）。 */
+    private static com.fasterxml.jackson.databind.ObjectMapper errorSafeMapper() {
+        com.fasterxml.jackson.databind.ObjectMapper mapper = JsonIO.compactMapper();
+        com.fasterxml.jackson.databind.module.SimpleModule module =
+                new com.fasterxml.jackson.databind.module.SimpleModule();
+        module.addSerializer(io.modelcontextprotocol.spec.McpError.class,
+                new com.fasterxml.jackson.databind.JsonSerializer<>() {
+                    @Override
+                    public void serialize(io.modelcontextprotocol.spec.McpError value,
+                                          com.fasterxml.jackson.core.JsonGenerator gen,
+                                          com.fasterxml.jackson.databind.SerializerProvider sp)
+                            throws java.io.IOException {
+                        gen.writeStartObject();
+                        gen.writeObjectFieldStart("error");
+                        var rpc = value.getJsonRpcError();
+                        gen.writeNumberField("code", rpc == null ? -32603 : rpc.code());
+                        gen.writeStringField("message",
+                                rpc == null ? String.valueOf(value.getMessage()) : String.valueOf(rpc.message()));
+                        gen.writeEndObject();
+                        gen.writeNullField("id");
+                        gen.writeEndObject();
+                    }
+                });
+        mapper.registerModule(module);
+        return mapper;
     }
 
     /**

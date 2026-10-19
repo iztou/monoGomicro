@@ -442,8 +442,14 @@ final class McpTools {
                 item.put("detail", f.getDetail());
                 findings.add(item);
             }
+            // A-19：token 预算——findings 截 top20，超出标 truncated（完整版走 audit.json）
+            boolean truncated = findings.size() > 20;
+            if (truncated) {
+                findings = new ArrayList<>(findings.subList(0, 20));
+            }
             out.put("findings", findings);
-            out.put("findingCount", findings.size());
+            out.put("findingCount", report.getFindings().size());
+            out.put("truncated", truncated);
             out.put("config", report.getConfig());
             out.put("note", "boundaryCoupling 是边界耦合率（编译期依赖口径，剔除 shared），"
                     + "不是跨服务通信占比；生效阈值见 config 字段。需要落盘完整报告时用 CLI："
@@ -478,7 +484,13 @@ final class McpTools {
                 item.put("worsened", m.isWorsened());
                 moves.add(item);
             }
+            boolean movesTruncated = moves.size() > 10;
+            if (movesTruncated) {
+                moves = new ArrayList<>(moves.subList(0, 10));
+            }
             out.put("moves", moves);
+            out.put("moveCount", advice.getMoves().size());
+            out.put("movesTruncated", movesTruncated);
             List<Map<String, Object>> structures = new ArrayList<>();
             for (RefactoringAdvisor.StructureSuggestion st : advice.getStructures()) {
                 structures.add(orderedMap(
