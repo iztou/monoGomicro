@@ -42,6 +42,8 @@ public class MicroserviceGenerator {
     private com.monogomicro.core.graph.DependencyGraph graph;
     /** 非空表示源码已拷贝，后续内核扩充需同步移动文件 */
     private Path moveContext;
+    /** A-05：社区 id → 去重后的 tag（唯一权威来源，目录/yml/端口/桥 key 全从这里取）。 */
+    private final Map<Integer, String> communityTags = new LinkedHashMap<>();
 
     public MicroserviceGenerator(AnalysisReport report, PartitionResult partition, Path projectDir) {
         this.report = report;
@@ -264,6 +266,11 @@ public class MicroserviceGenerator {
                     "输出目录包含原项目或当前工作目录，拒绝清空：" + outDir,
                     "输出目录必须是原项目/工作目录的子目录，或完全独立的目录");
         }
+        if (Files.exists(outDir) && !Files.isDirectory(outDir)) {
+            // A-07：-o 指向普通文件曾绕过 isNonEmptyDir 后被删除
+            throw new M2mException("E_BAD_OUT_DIR", "输出路径已存在且不是目录：" + outDir,
+                    "生成输出必须是目录；该位置已有文件，请更换输出目录");
+        }
     }
 
     private static boolean isNonEmptyDir(Path dir) throws IOException {
@@ -287,20 +294,41 @@ public class MicroserviceGenerator {
 
         // 归属关系：内核 -> common，其余 -> svc-<name>
         Set<String> kernel = new LinkedHashSet<>(partition.getKernelClasses());
-        Set<String> usedTags = new java.util.HashSet<>();
+        // A-02：@MapperScan 等全局配置类（stereotype=CONFIG 且声明了 MapperScan）强制提升进
+        // common——否则只落在一个服务里，其余服务启动即 No qualifying bean mapper
+        boolean promotedConfig = false;
+        for (PartitionResult.Community c : partition.getCommunities()) {
+            for (String fqcn : new ArrayList<>(c.getClasses())) {
+                if (isMapperScanConfig(fqcn)) {
+                    c.getClasses().remove(fqcn);
+                    if (kernel.add(fqcn)) {
+                        promotedConfig = true;
+                        result.getManualItems().add("全局配置类 " + fqcn + "（@MapperScan）已提升进 common；"
+                                + "各服务的 datasource/redis 配置仍需按 MIGRATION.md 人工迁移");
+                    }
+                }
+            }
+        }
+        if (promotedConfig) {
+            // 配置类进了 kernel，但其所属社区若因此变空需在后续归并中自然处理
+        }
         List<String[]> serviceDirs = new ArrayList<>(); // {目录名, 社区名}
         List<String> moduleTags = new ArrayList<>();
         for (String fqcn : kernel) {
             ownerOf.put(fqcn, "common");
         }
+        String basePackage = commonPackagePrefix();
+        // A-05：tag 只算一次（含冲突去重），目录/yml key/端口/桥 provider key 全部从这张表取——
+        // 此前 copyClasses/yml/portOfTag 各自重算 serviceTag，去重只作用于 serviceDirs 导致两社区合并
         for (PartitionResult.Community c : partition.getCommunities()) {
             String tag = serviceTag(c.getName(), c.getId());
-            // R-07：user 与 user-service 的 tag 都是 user，重复目录会让 modules 重复、
-            // 两个社区的类互相覆盖——冲突时追加社区 id 保证目录唯一
-            while (usedTags.contains(tag)) {
+            while (communityTags.containsValue(tag)) {
                 tag = tag + "-" + c.getId();
             }
-            usedTags.add(tag);
+            communityTags.put(c.getId(), tag);
+        }
+        for (PartitionResult.Community c : partition.getCommunities()) {
+            String tag = communityTags.get(c.getId());
             String dir = "svc-" + tag;
             serviceDirs.add(new String[]{dir, c.getName()});
             moduleTags.add(dir);
@@ -308,8 +336,6 @@ public class MicroserviceGenerator {
                 ownerOf.put(fqcn, dir);
             }
         }
-
-        String basePackage = commonPackagePrefix();
 
         // 1. 探测跨服务注入（消费类 -> provider 接口），把 provider 接口签名引用的
         //    第三方服务类型提前提升进共享内核（共享 DTO 提取，Mono2Micro 同样做法）
@@ -326,7 +352,7 @@ public class MicroserviceGenerator {
         // 2. 拷贝类源码（内核 + 各服务）
         copyClasses(kernel, outDir.resolve("common"), result.getManualItems());
         for (PartitionResult.Community c : partition.getCommunities()) {
-            String dir = "svc-" + serviceTag(c.getName(), c.getId());
+            String dir = "svc-" + communityTags.get(c.getId());
             Path serviceRoot = outDir.resolve(dir);
             copyClasses(c.getClasses(), serviceRoot, result.getManualItems());
             result.getClassesPerService().put(dir, c.getClasses().size());
@@ -412,16 +438,45 @@ public class MicroserviceGenerator {
                 manual.add("找不到源文件，需人工迁移：" + fqcn + "（" + info.getSourcePath() + "）");
                 continue;
             }
+            if (isOriginalBootApplication(src) || referencesSkippedBootstrap(src)) {
+                // A-01：原启动类与生成的 M2m*Application 双 main 会让 package 失败；
+                // 引用启动类的伴生入口（如 RuoYiServletInitializer extends SpringBootServletInitializer
+                // 且 .sources(RuoYiApplication.class)）一并跳过，否则编译不过
+                skippedBootstrapSimpleNames.add(info.getSimpleName());
+                manual.add("原启动/部署类 " + fqcn + " 未拷贝（各服务有自己的 Application）；"
+                        + "其 @MapperScan/exclude 等注解与 datasource/mybatis 配置需按 MIGRATION.md 人工迁移");
+                continue;
+            }
             if (!copiedFiles.add(src.toAbsolutePath())) {
                 continue; // 一个文件多个顶层类型：只拷一次，避免类重复
+            }
+            // A-04：fqcn 来自可编辑的 analysis.json——包名必须是合法 Java 标识符序列，
+            // 从源头杜绝 "../" 逃逸；sourcePath 必须相对且不越出 projectDir
+            if (!isValidPackageName(info.getPackageName())) {
+                manual.add("非法包名，拒绝拷贝（防路径逃逸）：" + fqcn + "（packageName=" + info.getPackageName() + "）");
+                continue;
+            }
+            Path relSource = Path.of(info.getSourcePath());
+            if (relSource.isAbsolute() || relSource.normalize().startsWith("..")) {
+                manual.add("sourcePath 必须是项目内相对路径，拒绝拷贝：" + fqcn + "（" + info.getSourcePath() + "）");
+                continue;
             }
             // 保留原文件名：一个文件可含多个顶层类型（仅主类型可 public），改名会破坏 JLS
             Path target = moduleRoot.resolve("src/main/java")
                     .resolve(info.getPackageName().replace('.', '/'))
                     .resolve(src.getFileName().toString());
+            if (!target.normalize().startsWith(moduleRoot.resolve("src/main/java").normalize())) {
+                manual.add("目标路径越出模块，拒绝拷贝：" + fqcn);
+                continue;
+            }
             Files.createDirectories(target.getParent());
             Files.copy(src, target);
         }
+    }
+
+    /** 合法 Java 包名（标识符序列），从源头封死路径段（../、绝对路径片段等）。 */
+    private static boolean isValidPackageName(String pkg) {
+        return pkg != null && pkg.matches("[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*");
     }
 
     /** mapper XML 按「文件名 == Mapper 类简单名」匹配到对应服务，保留 mapper/... 相对路径 */
@@ -578,7 +633,8 @@ public class MicroserviceGenerator {
                 req.providerService = providerOwner;
                 req.providerInterfaceFqcn = providerFqcn;
                 req.providerInterfaceSource = Files.readString(providerSrc, StandardCharsets.UTF_8);
-                req.providerNameKey = serviceTag(partitionName(providerOwner), 0);
+                // A-05：桥的 provider key 与 yml/目录同源（communityTags），不再独立 sanitize
+                req.providerNameKey = tagOfDir(providerOwner);
                 Path consumerSrcRoot = outDir.resolve(consumerOwner).resolve("src/main/java");
                 Path providerSrcRoot = outDir.resolve(providerOwner).resolve("src/main/java");
                 if (bridge.generate(req, consumerSrcRoot, providerSrcRoot, basePackage)) {
@@ -603,9 +659,14 @@ public class MicroserviceGenerator {
         }
     }
 
+    /** 目录名（svc-xxx）→ 去重 tag（去掉 svc- 前缀）。 */
+    private String tagOfDir(String ownerDir) {
+        return ownerDir.replaceFirst("^svc-", "");
+    }
+
     private String partitionName(String ownerDir) {
         for (PartitionResult.Community c : partition.getCommunities()) {
-            if (("svc-" + serviceTag(c.getName(), c.getId())).equals(ownerDir)) {
+            if (("svc-" + communityTags.get(c.getId())).equals(ownerDir)) {
                 return c.getName();
             }
         }
@@ -665,6 +726,53 @@ public class MicroserviceGenerator {
 
     // ---------- 服务工程文件 ----------
 
+    /** 生成的启动类全限定名（dir → fqcn），供 POM 显式 mainClass 使用（A-01 双保险）。 */
+    private final Map<String, String> generatedMainClasses = new LinkedHashMap<>();
+    /** 被跳过的原启动/部署类简单名——引用它们的其他类（如 ServletInitializer）也必须跳过。 */
+    private final java.util.Set<String> skippedBootstrapSimpleNames = new java.util.HashSet<>();
+
+    /**
+     * 检测源文件是否是原单体启动类（@SpringBootApplication 或独立 main 方法所在的
+     * Boot 应用入口）。生成的服务有自己的 M2m*Application，原启动类若被拷进同一模块，
+     * spring-boot-maven-plugin 会因双 main 而 package 失败（A-01）。
+     */
+    /** @Configuration + @MapperScan 的全局配置类（跨服务基础设施，必须人人可见）。 */
+    private boolean isMapperScanConfig(String fqcn) {
+        ClassInfo info = classIndex.get(fqcn);
+        if (info == null || info.getSourcePath() == null) {
+            return false;
+        }
+        try {
+            String text = Files.readString(projectDir.resolve(info.getSourcePath()));
+            return text.contains("@MapperScan");
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private static boolean isOriginalBootApplication(Path src) {
+        try {
+            String text = Files.readString(src);
+            return text.contains("@SpringBootApplication")
+                    || text.contains("extends SpringBootServletInitializer");
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /** 引用了任一被跳过启动类的源文件（编译依赖完整性：缺符号即编译失败）。 */
+    private boolean referencesSkippedBootstrap(Path src) {
+        if (skippedBootstrapSimpleNames.isEmpty()) {
+            return false;
+        }
+        try {
+            String text = Files.readString(src);
+            return skippedBootstrapSimpleNames.stream().anyMatch(n -> text.contains(n));
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
     private void writeApplicationClass(Path serviceRoot, String dir, String basePackage) throws IOException {
         String tag = dir.replaceFirst("^svc-", "");
         String camel = camelCase(tag);
@@ -686,6 +794,7 @@ public class MicroserviceGenerator {
                 .resolve(basePackage.replace('.', '/') + "/" + appName + ".java");
         Files.createDirectories(file.getParent());
         Files.writeString(file, content, StandardCharsets.UTF_8);
+        generatedMainClasses.put(dir, basePackage + "." + appName);
     }
 
     /** 该服务消费了哪些服务（用于生成 base-url 配置） */
@@ -710,7 +819,7 @@ public class MicroserviceGenerator {
         // 缺了会直接启动失败（Could not resolve placeholder）；指向自己的地址不会被调用，无害
         StringBuilder svcSection = new StringBuilder();
         for (PartitionResult.Community c : partition.getCommunities()) {
-            String tag = serviceTag(c.getName(), c.getId());
+            String tag = communityTags.get(c.getId());
             svcSection.append("  ").append(tag).append(":\n    base-url: http://localhost:")
                     .append(portOfTag(tag)).append("\n");
         }
@@ -723,9 +832,10 @@ public class MicroserviceGenerator {
     }
 
     private String portOfTag(String tag) {
+        // A-05：端口按 communityTags 的稳定顺序分配，与目录/yml 同源
         int port = 8081;
-        for (PartitionResult.Community c : partition.getCommunities()) {
-            if (serviceTag(c.getName(), c.getId()).equals(tag)) {
+        for (String t : communityTags.values()) {
+            if (t.equals(tag)) {
                 return String.valueOf(port);
             }
             port++;
@@ -781,7 +891,7 @@ public class MicroserviceGenerator {
 
         // common
         writeModulePom(outDir.resolve("common"), group, aggArtifact, aggArtifact + "-common",
-                version, deps, false);
+                version, deps, false, null);
 
         // services
         String commonDep = """
@@ -797,7 +907,7 @@ public class MicroserviceGenerator {
                 """.formatted(xml(group), xml(aggArtifact), xml(version));
         for (String dir : serviceDirs) {
             writeModulePom(outDir.resolve(dir), group, aggArtifact, dir, version,
-                    commonDep + deps, true);
+                    commonDep + deps, true, generatedMainClasses.get(dir));
         }
     }
 
@@ -810,7 +920,8 @@ public class MicroserviceGenerator {
     }
 
     private void writeModulePom(Path moduleDir, String group, String aggArtifact, String artifact,
-                               String version, String depsXml, boolean bootPlugin) throws IOException {
+                               String version, String depsXml, boolean bootPlugin,
+                               String mainClass) throws IOException {
         // 空模块（如无内核类拷贝的 common）没有前置步骤建目录，这里兜底
         Files.createDirectories(moduleDir);
         StringBuilder sb = new StringBuilder();
@@ -843,6 +954,11 @@ public class MicroserviceGenerator {
             sb.append("                <artifactId>spring-boot-maven-plugin</artifactId>\n");
             if (pluginVersion != null) {
                 sb.append("                <version>").append(xml(pluginVersion)).append("</version>\n");
+            }
+            // A-01 双保险：显式 mainClass——即使原启动类被意外拷入也不会双 main 失败
+            if (mainClass != null) {
+                sb.append("                <configuration><mainClass>").append(xml(mainClass))
+                        .append("</mainClass></configuration>\n");
             }
             // 显式绑定 repackage：无 parent 继承时插件不自动执行，产物是薄 jar，
             // java -jar 报"没有主清单属性"

@@ -129,7 +129,7 @@ public class WorkspaceController {
 
     /** 保存当前分区到 partition.json。目标路径必须落在 load 时 analysis 文件所在目录树内（R-04） */
     @PostMapping("/api/save")
-    public ResponseEntity<?> save(@RequestParam String path) throws Exception {
+    public ResponseEntity<?> save(@RequestParam("path") String path) throws Exception {
         if (!state.isLoaded()) {
             return ResponseEntity.status(409).body(Map.of("error", "尚未载入数据"));
         }

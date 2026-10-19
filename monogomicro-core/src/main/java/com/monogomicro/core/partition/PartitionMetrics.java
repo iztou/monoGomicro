@@ -86,8 +86,28 @@ public final class PartitionMetrics {
                 serviceOnly.put(fqcn, c);
             }
         });
-        double modularity = LouvainPartitioner.modularity(graph.symmetrized(), serviceOnly);
+        // A-06：模度必须在"已标注节点的诱导子图"上计算——此前把全图 symmetrized 传入，
+        // kernel 节点的度数计入 m2/degree 分母却不进分子，Q 被系统性压低
+        // （同一分区 partition.json 0.77 vs 本口径 0.55）
+        double modularity = LouvainPartitioner.modularity(inducedSubgraph(graph, serviceOnly), serviceOnly);
         return new Snapshot(crossRatio, modularity, kernelSize, communities);
+    }
+
+    /** 仅保留 labels 中已标注节点的对称化诱导子图（边两端都必须在 labels 中）。 */
+    private static Map<String, Map<String, Long>> inducedSubgraph(DependencyGraph graph,
+                                                                  Map<String, Integer> labels) {
+        Map<String, Map<String, Long>> sym = new LinkedHashMap<>();
+        for (String n : labels.keySet()) {
+            sym.put(n, new LinkedHashMap<>());
+        }
+        graph.forEach(e -> {
+            if (sym.containsKey(e.getFrom()) && sym.containsKey(e.getTo())) {
+                long w = e.getWeight();
+                sym.get(e.getFrom()).merge(e.getTo(), w, Long::sum);
+                sym.get(e.getTo()).merge(e.getFrom(), w, Long::sum);
+            }
+        });
+        return sym;
     }
 
     /**

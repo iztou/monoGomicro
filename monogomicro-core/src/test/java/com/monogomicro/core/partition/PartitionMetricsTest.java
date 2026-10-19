@@ -60,12 +60,25 @@ class PartitionMetricsTest {
 
     @Test
     void modularityMatchesDirectComputation() {
-        // 接线校验：内部标签推导（内核排除 + 社区归属）与直接调用 Louvain 静态方法一致
+        // 接线校验：内部标签推导（内核排除 + 社区归属）与直接调用 Louvain 静态方法一致；
+        // A-06：模度在已标注节点的诱导子图上计算（kernel 度数不得进分母），
+        // 该断言更新为与新口径一致——手工复算 Q(诱导图) = 1/3
         DependencyGraph g = graph();
         PartitionMetrics.Snapshot s = PartitionMetrics.of(g, partition());
         Map<String, Integer> serviceLabels = Map.of("a.A", 0, "a.B", 0, "b.C", 1, "b.D", 1);
-        assertEquals(LouvainPartitioner.modularity(g.symmetrized(), serviceLabels),
-                s.modularity(), 1e-12);
+        assertEquals(1.0 / 3.0, s.modularity(), 1e-12);
+        // 与直接在诱导子图上调用静态方法完全一致（可复算性）
+        Map<String, Map<String, Long>> induced = new java.util.LinkedHashMap<>();
+        for (String n : serviceLabels.keySet()) {
+            induced.put(n, new java.util.LinkedHashMap<>());
+        }
+        g.forEach(e -> {
+            if (induced.containsKey(e.getFrom()) && induced.containsKey(e.getTo())) {
+                induced.get(e.getFrom()).merge(e.getTo(), (long) e.getWeight(), Long::sum);
+                induced.get(e.getTo()).merge(e.getFrom(), (long) e.getWeight(), Long::sum);
+            }
+        });
+        assertEquals(LouvainPartitioner.modularity(induced, serviceLabels), s.modularity(), 1e-12);
     }
 
     @Test
