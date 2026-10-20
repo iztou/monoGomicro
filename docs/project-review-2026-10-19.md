@@ -1316,3 +1316,20 @@ I-01 的 agent IT 回归用例（建议下轮补，需子进程 fixture）。
 
 P0（§2.2/§2.3/§2.4）全部落地；plan 的 §3（入口契约测试扩展）/§4（可观测性）/§5-§6（诊断/约束）仍为 P1+ 迭代项。
 剩余发布前动作：推送 github+nas 后观察 GitHub Actions 首跑。
+
+## K.6 首跑 CI 抓到的新缺陷：N-03（已修）
+
+推送 62d183b 后 GitHub Actions 首跑失败（此前 round-4 的两次 CI 也失败但未被观察）：
+`GeneratedServicesRpcIT` 的生成工程 svc-consumer/svc-provider POM 报
+`'dependencies.dependency' must be unique: spring-boot-starter-web`。
+
+- **根因**：`writeModulePom` 给每个服务固定写入 starter-web（commonDep），而
+  `externalDepsXml` 又把原单体自己的 starter-web 照搬一份——Spring Boot 单体必然声明它，
+  生成 POM 从此双份。
+- **为何本地一直绿**：本地 Maven 3.9.16 把重复依赖当 WARNING，CI 的 Maven 版本当 ERROR——
+  典型的"本地测不出、只有 CI 能抓"（plan §2.4 最后一项的价值实证）。
+- **修复**：服务模块外部依赖按 `groupId:artifactId` 去重，硬编码的（无版本、走 BOM）优先；
+  回归测试 `GeneratedPomDependencyDedupTest`（断言字符串计数，不依赖 Maven 版本，本地可红）。
+
+Round-6 最终态：`mvn -B clean verify` **104 单测 + 6 IT 全绿**（core 61 / codegen 15 / web 4 / mcp 24）；
+CI 复推后转绿。

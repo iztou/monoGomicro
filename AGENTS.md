@@ -17,7 +17,7 @@ Java 单体 → 微服务拆分建议工具，IBM Mono2Micro 复刻。2026-09-23
 - MCP：契约测试 stdio/HTTP、生成服务运行级、agent 真 fork；stdio 冒烟——load 12 服务/move 看 delta/undo/dry-run 零触碰/正式生成/进度通知 5 条/拼错类名出相近候选
 - web 拖拽重算指标正常；agent demo 轨迹解析正确
 - 验证样本：RuoYi 在 `/Users/long/Work/gitRepo/RuoYi`；仓库已推 NAS（remote 名 `nas`，不推 Gitee）
-- 全仓测试计数以最近一次 `mvn clean verify` 为准（2026-10-20：**103 单测 + 6 IT**——core 61 / codegen 14 / web 4 / mcp 24；agent 2 + codegen 1 + mcp 3 IT）
+- 全仓测试计数以最近一次 `mvn clean verify` 为准（2026-10-20：**104 单测 + 6 IT**——core 61 / codegen 15 / web 4 / mcp 24；agent 2 + codegen 1 + mcp 3 IT）
 
 ## 关键坑（改代码前必读）
 
@@ -44,7 +44,7 @@ Java 单体 → 微服务拆分建议工具，IBM Mono2Micro 复刻。2026-09-23
 - **分发已落地（2026-10-16，0.1.0 首发即全渠道）**：Maven Central 五构件（parent/core/codegen/mcp/cli）PUBLISHED；Homebrew tap `iztou/homebrew-tap`（m2m / m2m-mcp formula，源=Central fat jar）+ jbang 直跑均本机实测通过。发布实操要点：Portal API `POST /api/v1/publisher/deployment/{id}` 可替代网页点 Publish（status 端点常年 500，用 deployments 列表端点查）；**勿单独跑 `central-publishing:publish` goal**（不带生命周期会发出缺签名的残次部署——只发 parent 且无 .asc，报 Missing signature）；gpg 2.5 在 macOS `--send-keys` 报 Invalid argument，用 `curl -X POST https://keyserver.ubuntu.com/pks/add --data-urlencode keytext@pubkey.asc` 绕过；brew `write_jar_script` 正确参数是 `java_version: "17"` 关键字（位置第三参是 JVM opts）。已知小债：CLI `--version` 硬编码 "m2m 1.0.0" 未随 0.1.0 同步（Main.java:21，下版改读 manifest）
 - **MCP HTTP 传输已落地（2026-10-16）**：`--http [--host --port]` 切 Streamable HTTP（SDK `HttpServletStreamableServerTransportProvider` + 内嵌 Jetty 12 ee10），stdio 默认不变；工具注册泛型化共用；`LoopbackHostValidator` 防 DNS rebinding；契约测试 McpHttpIT（裸 socket 客户端）。**坑：SDK 的 SSE 响应只在 JSON 首行前写 data: 前缀、多行本体到空行截止——按事件边界收集解析；java.net.http ofString 对该 chunked SSE 在 failsafe 环境行为不稳，IT 客户端用裸 socket**
 - **0.2.0 已发布（2026-10-16）**：五构件一发（parent/core/codegen/mcp/cli@0.2.0，含 MCP HTTP 传输）；版本号改读 jar manifest（core.Versions + shade 注入 Implementation-Version——picocli 注解值须编译期常量，CLI 走 `@Command(versionProvider=)`，MCP serverInfo 直接调）；README 双语（英文主 + zh-CN）；提交信息改英文
-- **audit（微服务架构体检）已全部完成（2026-10-17，main = develop = a166518）**：七阶段闭环 + Kimi 两轮评审修正（B1-B5）。RuoYi-Cloud 真实样本冒烟核验通过——亮点：业务服务编译期零直接依赖（边界耦合率 0.0000、跨服务全走 Feign api 模块）、system 模块 71 类上帝服务、dict 域 13 类与 system 零边（自包含子域堆积）；零 delta 建议是数学事实非 bug。入口：CLI `m2m audit -a [-s services.json] [-c audit-config.json] [--suggest]`、MCP `audit_architecture`/`suggest_refactoring`（共 17 工具）、web `POST /api/audit`。全仓 103 单测 + 6 IT（2026-10-20 round-5 后，计数以上方行为准）。设计/评审文档 docs/audit-design.md、docs/audit-review.md；行为保持对拍基线 docs/audit-baseline/（**冻结 analysis 输入版**）
+- **audit（微服务架构体检）已全部完成（2026-10-17，main = develop = a166518）**：七阶段闭环 + Kimi 两轮评审修正（B1-B5）。RuoYi-Cloud 真实样本冒烟核验通过——亮点：业务服务编译期零直接依赖（边界耦合率 0.0000、跨服务全走 Feign api 模块）、system 模块 71 类上帝服务、dict 域 13 类与 system 零边（自包含子域堆积）；零 delta 建议是数学事实非 bug。入口：CLI `m2m audit -a [-s services.json] [-c audit-config.json] [--suggest]`、MCP `audit_architecture`/`suggest_refactoring`（共 17 工具）、web `POST /api/audit`。全仓 104 单测 + 6 IT（2026-10-20 round-5/6 后，计数以上方行为准）。设计/评审文档 docs/audit-design.md、docs/audit-review.md；行为保持对拍基线 docs/audit-baseline/（**冻结 analysis 输入版**）
 - **0.3.0 缓发（2026-10-17 用户定）**：Central 月流量配额耗尽，下月再发（deploy + tag v0.3.0 + brew formula sha 更新 + README 安装段版本号）。代码已在 main，发布是纯操作
 - **round-5 审查闭环（2026-10-20）**：四轮外部审阅（DeepSeek/Kimi/ChatGPT）+ GPT 改进计划 P0 全落地——回归测试补齐（F-01/F-03/F-05/F-07/F-09/F-11/I-01/I-04，全部先红后绿）、web 测试基建从 0 到 4 条（Host/Origin 过滤器）、文档真值统一（README 双语 + mcp-design 17 工具/六模块/Q=0.77/按工具截断口径）、E_PARSE_FAILED 错误码。改进计划与全记录：docs/improvement-plan.md、docs/project-review-2026-10-19.md
 - 下一步候选：维护态。remote：`github` + `nas` 双推；tap iztou/homebrew-tap

@@ -38,9 +38,9 @@
 ### 2.1 提交与验证
 
 - [x] 提交 round-5/6 收尾（I-01..I-06、回归测试、报告与 AGENTS），英文提交信息，双推 `github` + `nas`。
-- [x] 干净树执行 `mvn -B clean verify`：**103 单测 + 6 IT 全绿**（core 61 / codegen 14 / web 4 / mcp 24；agent 2 + codegen 1 + mcp 3）。
+- [x] 干净树执行 `mvn -B clean verify`：**104 单测 + 6 IT 全绿**（core 61 / codegen 15 / web 4 / mcp 24；agent 2 + codegen 1 + mcp 3）。
 - [x] RuoYi 验收：analyze 290/980 → partition 冻结基线对拍 IDENTICAL → generate（7 桥全 svc→svc / 7 人工项）→ `mvn -DskipTests package`（12 jar + common）→ svc-user 启动停在 `Failed to configure a DataSource`（预期验收线）。
-- [ ] 推送后观察 GitHub Actions 首跑；环境失败与代码失败分开记录。
+- [x] 推送后观察 GitHub Actions 首跑：**抓到 N-03（生成服务 POM 重复声明 starter-web——本地 Maven 当警告、CI 当错误，本地永远测不出）**，同轮修复（GeneratedPomDependencyDedupTest，红绿验证）后复推转绿。
 
 ### 2.2 文档真值（单一事实源）
 
@@ -71,7 +71,7 @@
 - [x] workflow 改为 `mvn -B clean verify`（fresh checkout 下与 verify 等价，显式 clean 与本地门禁一致）。
 - [x] codegen IT 缓存隔离：CI 在 verify 后、缓存保存前清理 `~/.m2/repository/com/demo`（生成构件跨 run 残留会掩盖生成缺陷；runner 本身一次性，完整 `-Dmaven.repo.local` 隔离会失去依赖缓存、拖慢每轮 CI，不采用）。
 - [x] failsafe/surefire 失败时上传 `target/*-reports`（7 天保留）。
-- [ ] 确认 CI 从干净环境跑通（推送后观察首跑）。
+- [x] 确认 CI 从干净环境跑通：首跑抓到 N-03（重复依赖声明，仅 CI 的 Maven 版本报错），修复后复推转绿——CI 与本地行为差异的价值实证。
 
 ## 3. P1：入口契约测试（最高性价比）
 

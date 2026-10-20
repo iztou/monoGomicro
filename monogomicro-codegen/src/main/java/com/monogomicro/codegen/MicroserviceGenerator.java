@@ -985,7 +985,7 @@ public class MicroserviceGenerator {
         sb.append("</project>\n");
         Files.writeString(outDir.resolve("pom.xml"), sb.toString(), StandardCharsets.UTF_8);
 
-        String deps = externalDepsXml();
+        String deps = externalDepsXml(java.util.Set.of());
 
         // common
         writeModulePom(outDir.resolve("common"), group, aggArtifact, aggArtifact + "-common",
@@ -1003,15 +1003,25 @@ public class MicroserviceGenerator {
                         <artifactId>spring-boot-starter-web</artifactId>
                     </dependency>
                 """.formatted(xml(group), xml(aggArtifact), xml(version));
+        // N-03（CI 首跑暴露）：commonDep 固定写入 starter-web，而原单体（Spring Boot 单体必然）
+        // 的外部依赖里也有它——重复声明在部分 Maven 版本是 model 校验错误而非警告。
+        // 服务模块的外部依赖按 groupId:artifactId 去重，硬编码的（无版本、走 BOM）优先
+        java.util.Set<String> hardcoded = java.util.Set.of(
+                group + ":" + aggArtifact + "-common",
+                "org.springframework.boot:spring-boot-starter-web");
+        String svcExternalDeps = externalDepsXml(hardcoded);
         for (String dir : serviceDirs) {
             writeModulePom(outDir.resolve(dir), group, aggArtifact, dir, version,
-                    commonDep + deps, true, generatedMainClasses.get(dir));
+                    commonDep + svcExternalDeps, true, generatedMainClasses.get(dir));
         }
     }
 
-    private String externalDepsXml() {
+    private String externalDepsXml(java.util.Set<String> excludeGa) {
         StringBuilder sb = new StringBuilder();
         for (PomReader.Dep d : pomReader.externalDependencies()) {
+            if (excludeGa.contains(d.groupId() + ":" + d.artifactId())) {
+                continue;
+            }
             emitDep(sb, d, "            ");
         }
         return sb.toString();
