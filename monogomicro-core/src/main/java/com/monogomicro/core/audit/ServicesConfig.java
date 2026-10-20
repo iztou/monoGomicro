@@ -89,6 +89,10 @@ public final class ServicesConfig {
     public void validate() {
         Set<String> names = new LinkedHashSet<>();
         for (ServiceEntry s : services == null ? List.<ServiceEntry>of() : services) {
+            // I-02：services:[null] 曾裸 NPE（s.getName() 打在 null 元素上）
+            if (s == null) {
+                throw new M2mException("E_BAD_SERVICES_JSON", "services 含 null 元素", null);
+            }
             if (s.getName() == null || s.getName().isBlank()) {
                 throw new M2mException("E_BAD_SERVICES_JSON", "services[].name 不能为空", null);
             }
@@ -104,6 +108,14 @@ public final class ServicesConfig {
                 if (pattern == null || pattern.isBlank()) {
                     throw new M2mException("E_BAD_SERVICES_JSON",
                             "服务 " + s.getName() + " 的 modules 含 null/空模式", null);
+                }
+            }
+        }
+        // I-02：exclude:[null] 同样裸 NPE（globMatch 打在 null 上）
+        if (exclude != null) {
+            for (String pattern : exclude) {
+                if (pattern == null || pattern.isBlank()) {
+                    throw new M2mException("E_BAD_SERVICES_JSON", "exclude 含 null/空模式", null);
                 }
             }
         }

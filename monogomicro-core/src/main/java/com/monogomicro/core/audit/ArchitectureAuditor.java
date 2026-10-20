@@ -39,6 +39,9 @@ public final class ArchitectureAuditor {
     }
 
     public static AuditReport audit(DependencyGraph graph, ServiceLandscape landscape, AuditConfig cfg) {
+        // I-03：公共 API 不能只靠 CLI 入口校验——库调用方传入非法阈值（负数/Infinity）
+        // 会让反模式静默消失，产出"正常"的误导性报告
+        cfg.validate();
         List<ServiceLandscape.Service> business = landscape.businessServices();
         List<ServiceLandscape.Service> sharedSvcs = landscape.sharedServices();
 

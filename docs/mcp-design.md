@@ -6,8 +6,8 @@
 ## 1. 项目背景（30 秒版）
 
 monoGomicro 是一个 Java 单体应用 → 微服务拆分建议工具（IBM Mono2Micro 的开源复刻），
-Java 17 / Maven 五模块，v1 已完成并实测通过（RuoYi 4.8.3：290 类 / 980 边 / 模度 Q=0.81 /
-12 服务，生成的微服务工程 `mvn compile` 通过）。
+Java 17 / Maven 六模块，v1 已完成并实测通过（RuoYi 4.8.3：290 类 / 980 边 / 模度 Q=0.77 /
+12 服务，生成的微服务工程 `mvn package` 12 个 jar 全出、服务可启动到数据源配置项）。
 
 流水线四阶段，阶段间以 JSON 文件为契约：
 
@@ -126,7 +126,8 @@ slf4j → simple 绑定输出到 **stderr**。
 
 ## 6. 工具目录（核心设计）
 
-三层共 **15 个工具 + 2 个 resource**。命名统一 `snake_case`；所有入参出参为 JSON 对象。
+三层共 **17 个工具 + 2 个 resource**（audit 落地后新增 `audit_architecture` /
+`suggest_refactoring`，归观察层）。命名统一 `snake_case`；所有入参出参为 JSON 对象。
 注册时附带 MCP 工具 annotations（观察层标 `readOnlyHint`，`generate_services` 标
 `destructiveHint`——客户端会自动给写盘操作加确认 UI）与 outputSchema（结构化输出，
 客户端可校验渲染，比纯文本 JSON 稳）。
@@ -246,7 +247,9 @@ EMPTY ──analyze_project──▶ ANALYZED ──compute_partition──▶ P
 
 ## 8. 输出与 token 预算（渐进式披露规则）
 
-1. 单个工具返回目标 **≤ 4KB**（约 1~2K token），硬上限 8KB。
+1. **按工具截断**：每个会返回列表的工具自带截断策略（分页 / top-N + `truncated` 标记），
+   保证单次返回体有界；不承诺统一的字节上限（曾按"≤4KB/硬上限 8KB"设计，落地后改为
+   按工具治理——如 audit findings 默认 top20、moves 默认 top10，超出部分以 `total` 呈现）。
 2. 列表必须分页：默认 `pageSize=50`，上限 200；返回带 `total`。
 3. 边/邻居列表按 weight 降序取 top-N，被截断时输出 `truncated: true, total: N`。
 4. `fqcn` 永远全限定名（LLM 后续引用它做 `move_class` 入参，不能有歧义）。

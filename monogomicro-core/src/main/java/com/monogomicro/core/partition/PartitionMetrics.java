@@ -21,6 +21,13 @@ import java.util.Map;
  *
  * 口径提示：{@link PartitionEngine#buildResult} 里的 perCommunity fanIn/fanOut/intraWeight
  * 基于融合对称图且 /2 还原（无向口径），与本类的原始图口径**语义不同**，不可混用。
+ *
+ * F-09 口径说明：本类 modularity（诱导子图、原始权重）与 partition.json 里存的 Q
+ * （PartitionEngine 在融合图上计算：权重按 max 归一化 + ×1000 取整）语义不同——
+ * 纯静态输入时融合是等比缩放，两 Q 只差取整误差（千分位级）；含动态轨迹时融合把
+ * 动态边归一化到与静态同量级，动态占比越大差异越大（RuoYi 实测 0.002，
+ * 人为把动态边压到跨簇上可放大一个数量级）。两口径各自自洽，断言传等值；
+ * 差异量级契约由 PartitionQToleranceTest 锁定（回归见 A-06：修复前系统性偏差 0.22）。
  */
 public final class PartitionMetrics {
 

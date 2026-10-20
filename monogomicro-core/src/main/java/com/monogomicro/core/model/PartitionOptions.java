@@ -9,6 +9,11 @@ public class PartitionOptions {
             throw new com.monogomicro.core.M2mException("E_BAD_PARAMS",
                     "alpha/beta 必须在 [0,1] 内，当前 alpha=" + alpha + ", beta=" + beta, null);
         }
+        if (alpha + beta <= 0) {
+            // F-10：双零权重会产出"正常"的空分区（所有边权重 0），比报错更难察觉
+            throw new com.monogomicro.core.M2mException("E_BAD_PARAMS",
+                    "alpha+beta 必须 > 0（两者同时为 0 时所有边权重归零，分区无意义）", null);
+        }
         if (minCommunitySize < 1) {
             throw new com.monogomicro.core.M2mException("E_BAD_PARAMS",
                     "minCommunitySize 必须 >= 1，当前 " + minCommunitySize, null);

@@ -19,6 +19,23 @@ jobs:
           cache: maven
 
       # 全量单测 + IT（codegen 的 GeneratedServicesRpcIT 会 install 生成工程并起双服务，
-      # agent 的 AgentEntryIT fixture 固定 --release 17，与本机 JDK 版本解耦）
+      # agent 的 AgentEntryIT / AgentRelativeOutIT fixture 固定 --release 17 并真 fork 子进程，
+      # 与本机 JDK 版本解耦）。fresh checkout 下 verify 本就等价 clean，显式 clean 与本地门禁一致
       - name: Maven verify
-        run: mvn -B verify
+        run: mvn -B clean verify
+
+      # codegen IT 会把生成工程（com.demo）install 进本地仓库——CI 的 maven 缓存跨 run 保留，
+      # 残留的生成构件可能掩盖下一轮生成缺陷，保存缓存前清掉
+      - name: Prune generated artifacts from Maven cache
+        if: always()
+        run: rm -rf ~/.m2/repository/com/demo
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            **/target/surefire-reports/
+            **/target/failsafe-reports/
+          retention-days: 7

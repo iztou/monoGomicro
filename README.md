@@ -33,7 +33,7 @@ checklist for everything that needs a human.
 monogomicro-core      parser / dependency graph / partitioning / metrics — zero-framework library
 monogomicro-agent     runtime instrumentation agent (ByteBuddy, premain)
 monogomicro-codegen   partition → microservice project generation (source rewriting)
-monogomicro-cli       the m2m CLI (analyze / partition / trace / generate)
+monogomicro-cli       the m2m CLI (analyze / partition / trace / generate / audit)
 monogomicro-web       local console (thin Spring Boot REST + D3 single page)
 monogomicro-mcp       MCP server (stdio + Streamable HTTP, 17 tools)
 ```
@@ -44,7 +44,7 @@ Artifacts are on [Maven Central](https://central.sonatype.com/artifact/io.github
 
 ```bash
 # Homebrew (macOS / Linuxbrew)
-brew install iztou/tap/m2m        # CLI: m2m analyze / partition / trace / generate
+brew install iztou/tap/m2m        # CLI: m2m analyze / partition / trace / generate / audit
 brew install iztou/tap/m2m-mcp    # MCP server (stdio)
 
 # jbang — no clone, no package step; jbang even provisions the JDK
@@ -120,7 +120,7 @@ binding `0.0.0.0` will get LAN clients 403-rejected on Host mismatch.
 17 tools: `analyze_project` / `load_workspace` / `ingest_trace` / `compute_partition` /
 `generate_services` (dry-run by default) / `save_partition` (pipeline);
 `get_partition_summary` / `list_classes` / `get_class_info` / `find_classes` / `get_metrics` /
-`get_migration_items` (observation, progressive disclosure, ≤4KB per tool result);
+`get_migration_items` (observation, progressive disclosure, per-tool truncation);
 `move_class` (returns metric delta) / `rename_service` / `undo` (editing);
 `audit_architecture` / `suggest_refactoring` (architecture audit, read-only).
 Two resources — `m2m://analysis` and `m2m://partition` — let clients pull the big objects on demand.
@@ -184,8 +184,13 @@ shared-lib abuse findings (StringUtils etc. depended on by 6/7 services) all che
 | analyze | 290 classes / 980 weighted dependency edges / 92 dependency jars auto-resolved |
 | partition | modularity Q=0.77, 12 services, ~20% boundary coupling (compile-time view) |
 | known boundaries recovered | ruoyi-quartz → job service (16/19 classes), ruoyi-generator → table service, system module split into user/role/post/dict vertical slices |
-| generate | 12 services + shared common kernel / 16 RPC bridges / 13 injections rewritten / 21 mapper XMLs migrated |
-| acceptance | **generated projects pass `mvn compile`**; 4 residual items listed in MIGRATION.md |
+| generate | 12 services + shared common kernel / 7 RPC bridges routed to impl owners / 7 manual items in MIGRATION.md |
+| acceptance | **generated projects pass `mvn package` (12 runnable jars)**; services boot up to the datasource-config step; 7 residual items listed in MIGRATION.md |
+
+Two modularity figures exist on purpose: `partition.json` stores Q computed on the fused
+(static+dynamic, integer-scaled) graph, while web/MCP show live Q on the raw-weight induced
+subgraph — identical for static-only input up to rounding (sub-1%), and growing with the dynamic
+trace share (0.002 on this sample).
 
 ## Algorithm highlights
 

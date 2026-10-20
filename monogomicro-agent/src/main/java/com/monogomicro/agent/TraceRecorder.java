@@ -27,14 +27,19 @@ public final class TraceRecorder {
         }
         running = true;
         Thread writer = new Thread(() -> {
-            Path tracePath = Path.of(outFile);
+            // I-01：相对路径的 getParent() 为 null（NPE 不在 catch 范围内，writer 线程曾直接死亡、
+            // 轨迹零落盘）——先转绝对路径再取 parent，且 parent 为 null 时跳过创建
+            Path tracePath = Path.of(outFile).toAbsolutePath().normalize();
             // F-13：不跟随已有符号链接（防 /tmp 下的预置链接劫持写入位置）
             try {
                 if (java.nio.file.Files.exists(tracePath)
                         && java.nio.file.Files.isSymbolicLink(tracePath)) {
                     java.nio.file.Files.delete(tracePath);
                 }
-                java.nio.file.Files.createDirectories(tracePath.getParent());
+                Path parent = tracePath.getParent();
+                if (parent != null) {
+                    java.nio.file.Files.createDirectories(parent);
+                }
             } catch (IOException prep) {
                 // 准备失败交由下方打开逻辑统一报错停机
             }
@@ -45,7 +50,7 @@ public final class TraceRecorder {
                     java.nio.file.StandardOpenOption.WRITE)) {
                 // A-33：POSIX 0640——同机其他用户不可读（内部类名是信息）
                 try {
-                    java.nio.file.Files.setPosixFilePermissions(Path.of(outFile),
+                    java.nio.file.Files.setPosixFilePermissions(tracePath,
                             java.nio.file.attribute.PosixFilePermissions.fromString("rw-r-----"));
                 } catch ( UnsupportedOperationException | IOException ignore ) {
                     // 非 POSIX 文件系统（如 Windows）：跳过权限收紧

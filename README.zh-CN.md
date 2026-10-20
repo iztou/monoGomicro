@@ -29,7 +29,7 @@ Java 单体应用 → 微服务拆分建议工具（IBM Mono2Micro 的开源复�
 monogomicro-core      解析器 / 依赖图 / 分区算法 / 指标 —— 无框架纯库
 monogomicro-agent     运行时插桩 agent（ByteBuddy，premain）
 monogomicro-codegen   分区 → 微服务工程生成（源码改写）
-monogomicro-cli       m2m 命令行（analyze / partition / trace / generate）
+monogomicro-cli       m2m 命令行（analyze / partition / trace / generate / audit）
 monogomicro-web       本地控制台（Spring Boot 薄 REST + D3 单页）
 monogomicro-mcp       MCP server（stdio + Streamable HTTP，17 工具）
 ```
@@ -40,7 +40,7 @@ monogomicro-mcp       MCP server（stdio + Streamable HTTP，17 工具）
 
 ```bash
 # Homebrew（macOS / Linuxbrew）
-brew install iztou/tap/m2m        # CLI：m2m analyze / partition / trace / generate
+brew install iztou/tap/m2m        # CLI：m2m analyze / partition / trace / generate / audit
 brew install iztou/tap/m2m-mcp    # MCP server（stdio）
 
 # jbang 直跑（免克隆免 package，JDK 也由 jbang 自动供应）
@@ -116,7 +116,7 @@ java -jar monogomicro-mcp/target/m2m-mcp.jar --http --port 8082   # 默认 127.0
 工具一览（17 个）：`analyze_project` / `load_workspace` / `ingest_trace` / `compute_partition` /
 `generate_services`（默认 dry-run）/ `save_partition`（流水线）；`get_partition_summary` /
 `list_classes` / `get_class_info` / `find_classes` / `get_metrics` / `get_migration_items`
-（观察，渐进式披露，单工具返回 ≤4KB）；`move_class`（返回指标 delta）/ `rename_service` /
+（观察，渐进式披露，按工具截断）；`move_class`（返回指标 delta）/ `rename_service` /
 `undo`（编辑）；`audit_architecture` / `suggest_refactoring`（架构体检，只读）。另有资源 `m2m://analysis`、`m2m://partition` 供客户端按需拉取大对象。
 错误统一结构化（`{code, message, hint}`，拼错类名/服务 id 附相近候选）；写路径限制在 workspace 根内；
 `analyze_project` 支持进度通知（客户端传 `_meta.progressToken` 即每 50 个源文件收到进度）。
@@ -172,8 +172,12 @@ RuoYi-Cloud 实测（274 类 / 16 模块）：边界耦合率 **0.0000**——�
 | analyze | 290 类注册 / 980 条加权依赖边 / 92 依赖 jar 自动解析 |
 | partition | 模度 Q=0.77，12 个服务，边界耦合率 ~20%（编译期依赖口径） |
 | 已知边界恢复 | ruoyi-quartz → job 服务（16/19 类）、ruoyi-generator → table 服务、system 各功能域切成 user/role/post/dict 等垂直切片 |
-| generate | 12 服务 + common 共享内核 / 16 组 RPC 桥 / 13 处注入自动改写 / 21 个 mapper XML 迁移 |
-| 验收 | **生成工程 `mvn compile` 通过**，残余 4 项列入 MIGRATION.md |
+| generate | 12 服务 + common 共享内核 / 7 组 RPC 桥（全部路由到实现类属主）/ 7 项人工（MIGRATION.md） |
+| 验收 | **生成工程 `mvn package` 通过（12 个可运行 jar）**，服务可启动到数据源配置步骤，残余 7 项列入 MIGRATION.md |
+
+模度有两个口径属刻意设计：`partition.json` 存的是融合图（静态+动态、整数化权重）上的 Q，
+web/MCP 实时展示的是原始权重诱导子图上的 Q——纯静态输入时两者只差取整误差（百分位内），
+动态轨迹占比越大差异越大（本样本实测 0.002）。
 
 ## 算法要点
 

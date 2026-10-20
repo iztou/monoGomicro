@@ -678,6 +678,11 @@ public class MicroserviceGenerator {
                         continue;
                     }
                     providerOwner = implOwner;
+                    // I-04：reroute 后 impl 属主可能就是消费者所在服务——同属判定必须按
+                    // 最终 owner 重做一次，否则仍生成"HTTP 打自己"的自桥
+                    if (providerOwner.equals(consumerOwner)) {
+                        continue;
+                    }
                 }
                 ClassInfo providerInfo = classIndex.get(providerFqcn);
                 Path providerSrc = projectDir.resolve(providerInfo.getSourcePath());
@@ -739,7 +744,8 @@ public class MicroserviceGenerator {
     /** impl 的 implements 列表里是否含目标接口（简单名或全限定名匹配）。 */
     private static String matchInterface(ClassInfo impl, String simpleName, String interfaceFqcn) {
         for (String itf : impl.getInterfaces()) {
-            if (itf.equals(interfaceFqcn) || itf.endsWith("." + simpleName)) {
+            // 扫描器存的通常是纯简单名（无包前缀），也兼容全限定名/带点后缀写法
+            if (itf.equals(simpleName) || itf.equals(interfaceFqcn) || itf.endsWith("." + simpleName)) {
                 return interfaceFqcn;
             }
         }

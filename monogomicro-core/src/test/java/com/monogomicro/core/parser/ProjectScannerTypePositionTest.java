@@ -49,22 +49,23 @@ class ProjectScannerTypePositionTest {
                 public class Holder {
                     // record 组件
                     public record R(RecTarget rec) {}
-                    // throws 声明 + catch 参数 + instanceof + cast + 局部变量 + 方法引用
+                    // I-06：LocalTarget/ThrowsTarget 必须只经唯一位置引用（不带 new），
+                    // 否则局部变量/throws 提取整段失效时断言仍会因 CONSTRUCT 边通过
                     public void m(Object o) throws ThrowsTarget {
                         if (o instanceof InstanceOfTarget) {
                             CastTarget c = (CastTarget) o;
                         }
                         try {
-                            throw new ThrowsTarget();
-                        } catch (CatchTarget e) {
+                            Class.forName("x");
+                        } catch (CatchTarget | ClassNotFoundException e) {
                             // 吞掉
                         }
-                        LocalTarget local = new LocalTarget();
+                        LocalTarget local = null;
                         Runnable r = MethodRefTarget::new;
                     }
                 }
                 """);
-        // MethodRefTarget 需要可供引用的构造器（默认即有）；new 表达式会带一条边，不影响断言
+        // MethodRefTarget 仅经方法引用（::new 是 MethodReferenceExpr 而非 new 表达式）出现，断言隔离
 
         DependencyGraph graph = new ProjectScanner(List.of("com.demo"), false).scan(project);
         Set<String> edgeTargets = graph.edges().stream()

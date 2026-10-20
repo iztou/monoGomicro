@@ -106,6 +106,7 @@ public class ProjectScanner {
     }
 
     public DependencyGraph scan(Path projectDir) throws IOException {
+        parseFailures.clear(); // F-05：实例复用时不得跨轮累积上轮失败记录
         List<Path> sourceRoots = findSourceRoots(projectDir);
         if (sourceRoots.isEmpty()) {
             throw new com.monogomicro.core.M2mException("E_PROJECT_NOT_FOUND",
@@ -164,6 +165,13 @@ public class ProjectScanner {
                         log.warn("解析失败（计入 report.parseFailures）：{}：{}", file, result.getProblems());
                         continue;
                     }
+                    // I-05：「一好一坏」文件（有顶层类型但 problems 非空）——好类型正常注册，
+                    // 坏类型被 JavaParser 丢弃的事实必须可见（WARN + 计入 parseFailures）
+                    if (!result.getProblems().isEmpty()) {
+                        parseFailures.add(file.toString());
+                        log.warn("部分解析失败（文件中可能有类型被丢弃，计入 report.parseFailures）：{}：{}",
+                                file, result.getProblems());
+                    }
                     String pkg = cu.getPackageDeclaration().map(p -> p.getNameAsString()).orElse("");
                     // 注册全部顶层类型：class/interface、enum、@interface（注解）
                     // —— 注解和枚举也是一等公民，漏掉会破坏共享内核的依赖闭包
@@ -188,6 +196,13 @@ public class ProjectScanner {
         }
         log.info("注册 {} 个项目类", graph.nodeCount());
         if (graph.nodeCount() == 0) {
+            // A-15：全部文件都解析失败时报"包前缀不匹配"会误导排障方向——
+            // 有解析失败时优先归因语法错误
+            if (!parseFailures.isEmpty()) {
+                throw new com.monogomicro.core.M2mException("E_PARSE_FAILED",
+                        "没有可注册的类，且 " + parseFailures.size() + " 个源文件解析失败",
+                        "先修复编译错误再分析；失败清单见 report.parseFailures");
+            }
             throw new com.monogomicro.core.M2mException("E_PKG_NO_MATCH",
                     "没有匹配包前缀 " + packagePrefixes + " 的类",
                     "检查包前缀是否与项目实际包名一致（可先试一二级包名，如 com.ruoyi）");
@@ -365,6 +380,11 @@ public class ProjectScanner {
     /** 类型 + 递归泛型参数都算引用（List<SysRole> 里的 SysRole 是硬依赖） */
     private void addTypeEdges(DependencyGraph graph, String from, com.github.javaparser.ast.type.Type type,
                               ParsedUnit unit, DependencyEdge.EdgeKind kind, String sample) {
+        // 多 catch（catch (A | B e)）的类型是 UnionType——逐元素递归，否则 B 侧依赖丢失
+        if (type instanceof com.github.javaparser.ast.type.UnionType union) {
+            union.getElements().forEach(el -> addTypeEdges(graph, from, el, unit, kind, sample));
+            return;
+        }
         if (type instanceof ClassOrInterfaceType cit) {
             addEdge(graph, from, resolveTypeName(cit, unit), kind, sample);
             cit.getTypeArguments().ifPresent(args -> args.forEach(

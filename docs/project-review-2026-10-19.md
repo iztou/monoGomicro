@@ -1040,3 +1040,279 @@ generate 时一起传入（CLI/MCP 已经是这样）。
 - 没有发现新的 P0；A-01/A-02（package/DataSource）主体修复有效，A-05/A-07(CLI)/A-10/A-16/A-19/A-23 也确实闭环。
 - 建议顺序：F-01/F-02/F-03（各一小修 + 回归）→ F-04/F-05/F-06/F-07 → F-08..F-17。
   修完后再跑一次「真实 RuoYi 生成 → package → 启动到 DataSource」与「浏览器同源 POST」两条验收。
+
+
+---
+
+# 附 G：Kimi 复核 zcode round-4（2026-10-19 20:55，HEAD=d47437b develop）
+
+范围：`d47437b`（附 F 的 F-01..F-15 修复；附 E 的四项也随此提交入库）。
+方式：全量 verify、冻结基线对拍、RuoYi 重新生成+package 实测、web 端点实测、逐 diff 读码。
+
+## G.1 总体验证
+
+- `mvn verify` **BUILD SUCCESS**（core 49 + codegen 10 + mcp 24 = 83 单测，5 IT 全绿）
+- 冻结基线对拍 **identical**
+- RuoYi 重新生成 → `mvn package` exit=0，12 jar 全出
+
+## G.2 F 项复核
+
+| 项 | 结论 | 证据 |
+|---|---|---|
+| F-01 basePackage 逃逸 | ✅ 闭环（代码） | `commonPackagePrefix` 逐段校验合法标识符、非法截断回退 `com.generated`；`writeApplicationClass` 目标路径 normalize+startsWith 双保险 |
+| F-02 桥路由 impl 属主 | ⚠️ **实现有缺陷，路由路径实为死代码** | 见 G.3 |
+| F-03 Origin 端口 | ✅ 闭环（实测） | 同源带端口 POST /api/load → 200；`Origin: http://evil.example` → 403 |
+| F-04 前端 rethrow/字段 | ✅ 闭环（代码） | `doGenerate` 失败 rethrow；`api()` 读 `data.message \|\| data.code` |
+| F-05 恢复型解析错误 | ◐ 主路径闭环 | `problems 非空 && 0 顶层类型` 计入 parseFailures ✅；**但 `parseFailures` 未在 `scan()` 开头清空**（:86 final 字段只初始化一次，实例复用时跨轮累积——附 F 明确建议过）；无回归测试 |
+| F-06 NaN 序列化 | ◐ 实现正确缺测试 | Double/double 双 serializer 写 null ✅（double.class raw cast 虽丑但可行）；**无 round-trip 测试** |
+| F-07 web partition 保护 | ✅ 闭环（实测） | load 记录 analysis+partition 双路径；实测 generate outDir=partition 所在目录 → 400 E_BAD_OUT_DIR 且文件保留 |
+| F-08 jsonrpc 字段 | ✅ 闭环（代码） | serializer 补 `jsonrpc:"2.0"` |
+| F-10 isFinite | ◐ 半闭环 | `AuditConfig` 改 `!Double.isFinite(v)` ✅；**`PartitionOptions` 仍无 `alpha+beta>0`**（`--alpha 0 --beta 0` 仍放行）；`ArchitectureAuditor.audit()` 公共 API 仍不内校验 |
+| F-11 null pattern | ✅ 闭环（代码） | modules 元素 null/空白抛 E_BAD_SERVICES_JSON |
+| F-14 父目录创建 | ✅ 闭环（代码） | `isDirectory` 存在即跳过 createDirectories |
+
+F-12/F-13/F-15（文案/trace 加固/AGENTS 同步）按提交说明采信，未逐条复核。
+
+## G.3 新发现：G-01（P1）F-02 的 impl 路由是死代码——`matchInterface` 不匹配简单名
+
+**证据链**：
+
+1. RuoYi 回归生成：7 组桥 → **2 组**，5 个提升进 common 的接口（ISysUserService/ISysConfigService/
+   ISysMenuService/ISysRoleService）全部落入「实现类属主不明」人工项；
+2. 但这 5 个接口的实现类** cleanly 单属主**：SysUserServiceImpl→svc-user、SysConfigServiceImpl→svc-config、
+   SysMenuServiceImpl→svc-notice、SysRoleServiceImpl→svc-role（`find` 实测）；
+3. analysis.json 里 5 个 impl 的 `interfaces` 字段齐全，值是**简单名**（`["ISysUserService"]`）；
+4. `MicroserviceGenerator.java:742`：`itf.equals(interfaceFqcn) || itf.endsWith("." + simpleName)`——
+   简单名无点号前缀，两个条件永不命中 → `serviceImplOwnerOf` 恒返回 null。
+
+**后果**：F-02 的核心路由逻辑上线即死代码，所有「接口提升进 common」的桥都退化进人工项。
+`svc.common.base-url` 确实消除了（问题以另一种方式"解决"），但自动桥接率从 16 组塌到 2 组，
+与本可自动路由的 5 组失之交臂。附 F 的修复建议明确写了「补一个 provider 接口被提升的 fixture」，
+未做——有此测试这条必现。
+
+**修复**：`matchInterface` 补 `itf.equals(simpleName)` 分支（一行）；补 reroute fixture 单测。
+
+## G.4 结论
+
+round-4 的 F-01/F-03/F-04/F-07/F-08/F-11/F-14 修复正确且实测有效；但 **G-01 是阻断级**——
+F-02 的名义修复没有真正生效。剩余小项：F-05 的 scan() 清空、F-06 的 round-trip 测试、
+F-10 的 `alpha+beta>0`。建议：修 G-01（一行 + fixture 测试）后重跑 RuoYi 验收
+（预期桥 2 → 7 组、人工项 12 → 7 条），0.3.0 门禁方可视为真正清除。
+
+
+---
+
+# 附 H：Kimi 修复 G-01 及附 G 残余（2026-10-19 21:10，HEAD=d47437b develop 工作区）
+
+| 项 | 修复 | 验证 |
+|---|---|---|
+| G-01 matchInterface 死代码 | 补 `itf.equals(simpleName)` 分支（扫描器存的 interfaces 是纯简单名）；新增 `BridgeRerouteTest`：内核类引用接口→闭包提升→桥必须路由到 impl 属主服务，断言 controller 不在 common、client 引用 `svc.<impl>.base-url` | 单测绿；RuoYi 端到端见下 |
+| F-05 残余 | `parseFailures.clear()` 移到 `scan()` 开头（实例复用不再跨轮累积） | core 单测绿 |
+| F-06 残余 | 新增 `NonFiniteDoubleSerializationTest`：NaN/Infinity → null token、无裸 NaN、round-trip 可读回 | 2 条测试绿（同时实证了 zcode 的 serializer 修复有效） |
+| F-10 残余 | `PartitionOptions.validate()` 补 `alpha+beta>0`（双零产出无意义空分区，比报错更难察觉） | 编译 + 全量 verify |
+
+## 端到端验收（RuoYi 4.8.3）
+
+- 生成：**7 组 RPC 桥**（G-01 修复前 2 组），全部 svc→svc 真跨服务，路由全部命中 impl 属主
+  （svc-user→svc-config 的 ISysConfigService、svc-role→svc-user 的 ISysUserService 等）；无 common→common、
+  无 svc→common；人工项 12 → 7 条
+- 生成工程 `mvn -DskipTests package` exit=0，12 jar 全出
+- 全量 `mvn verify` **BUILD SUCCESS**（core 51 + codegen 11 + mcp 24 = 86 单测，5 IT）
+- 冻结基线对拍 **identical**
+
+未提交，提交与双推（github + nas）按惯例执行，提交信息英文。
+
+**0.3.0 代码侧门禁至此真正清除**：P0-P2 全链路（analyze → partition → generate → package → 启动到
+DataSource）在真实单体上实测贯通，剩余 P3 项与 CI 首跑观察属迭代期事项。
+
+---
+
+# 附 I：DeepSeek round-5 独立复核（2026-10-19 21:20，HEAD=d47437b + 未提交工作区）
+
+范围：`d47437b`（附 F 的 F-01..F-15）+ 工作区 G-01/F-05/F-06/F-10 收尾 + 两个新测试。
+方式：`mvn clean verify`、RuoYi 重新生成 + package + 启动、CLI/Web/MCP/agent 实测、逐 diff 读码。
+
+## I.1 基线
+
+- `mvn -B clean verify` **BUILD SUCCESS**：core 51 + codegen 11 + mcp 24 = **86 单测**，5 IT 全绿。
+- RuoYi：12 服务 / 263 类 / **7 组 RPC 桥** / 7 项人工；`mvn package` **12 jar 全出**。
+- `svc-user` 启动只到 `Failed to configure a DataSource`（配置迁移人工项），不再有 mapper/placeholder 错误。
+- 冻结基线对拍仍 identical。
+
+## I.2 附 G/H 项目复核
+
+| 项 | 结论 | 本轮证据 |
+|---|---|---|
+| F-01 Application 逃逸 | ✅ 闭环 | evil analysis 生成后 `/tmp/evil-write` 无文件；Application 落在 `out/svc-x/src/main/java/com/generated/` |
+| F-02 + G-01 impl 路由 | ✅ 闭环 | 7 组桥全部 `svc-* -> svc-*`；0 个 controller 在 common；0 处 `svc.common`；client key 分别为 `svc.config/notice/role/user`，yml 均有对应 key |
+| F-03 Origin 端口 | ✅ 闭环 | `Origin: http://127.0.0.1:18093` 的 `/api/load` 200；`https://evil.example` 403；伪造 Host 403 |
+| F-04 前端 rethrow/字段 | ✅ 代码闭环 | `api()` 改 `data.message \|\| data.code`；`doGenerate` 失败 rethrow；未见浏览器 E2E |
+| F-05 恢复型解析 | ◐ 主路径闭环 | 恢复型 `B.java` 已进 `parseFailures` + WARN；`scan()` 开头 `clear()` 实测跨轮不累积。但「一个文件有一个正常顶层类 + 一个坏类型」时 `getTypes()` 非空，坏类型仍不记录（见 I-05） |
+| F-06 NaN 序列化 | ✅ 闭环 | `"modularity" : null`；`JsonIO.read` 可读回；新增 round-trip 测试 |
+| F-07 web partition 保护 | ✅ 闭环 | `outDir=partition 所在目录` → 400 `E_BAD_OUT_DIR`，partition 文件保留 |
+| F-08 jsonrpc | ✅ 闭环 | 4xx body 为 `{"jsonrpc":"2.0","error":...,"id":null}` |
+| F-10 校验 | ◐ 半闭环 | `1e999` → E_BAD_PARAMS；`--alpha 0 --beta 0` → E_BAD_PARAMS；但 `ArchitectureAuditor.audit(graph,landscape,cfg)` 仍不调用 `validate()`（公共 API 可绕过） |
+| F-11 null pattern | ◐ 半闭环 | `modules:[null]` 已报 E_BAD_SERVICES_JSON；`services:[null]`、`exclude:[null]` 仍裸 NPE |
+| F-12 max-services | ✅ 文案闭环 | help 改为「软上限（超过则尽量合并；等大孤立分量时可能超出并输出提示）」 |
+| F-14 `/tmp` 父目录 | ✅ 闭环 | `m2m partition -o /tmp` exit=0，正常写出 `/tmp/partition.json` |
+| F-15 AGENTS | ◐ 半闭环 | 已改 17 工具/Q=0.77；但写 83 单测 + 5 IT，实际 **86 + 5**（新增 BridgeReroute/NonFinite 测试后未回填） |
+| F-16 提交 | ❌ 未闭环 | `git status`：3 个源文件 M + `BridgeRerouteTest`/`NonFiniteDoubleSerializationTest` 未跟踪 + 报告 M；round-5 收尾尚未提交 |
+| F-09 Q 双值 | ❌ 未修 | partition.json 0.7668238146123224 vs `PartitionMetrics.of` 0.7649872570516053（融合权重取整差异），未在 G/H 处理 |
+
+## I.3 新发现
+
+### I-01（P2，实测）agent 相对 `out=` 路径导致 writer 线程 NPE，零轨迹但横幅仍报“已启动”
+
+**证据**：
+
+```bash
+cd /tmp/agentrel
+java -javaagent:.../monogomicro-agent-0.3.0.jar=out=rel.log,include=p.,entry=A -cp . p.A
+# [monogomicro] 轨迹采集已启动 -> rel.log（include=[p.]）
+# Exception in thread "monogomicro-trace-writer"
+#   java.lang.NullPointerException: ... because "path" is null
+#   at com.monogomicro.agent.TraceRecorder.lambda$start$0(TraceRecorder.java:37)
+# ls rel.log → No such file
+```
+
+**根因**：F-13 新增 `Files.createDirectories(tracePath.getParent())`，相对路径 `rel.log` 的
+`getParent()` 为 `null`；NPE 不是 `IOException`，不会被 `catch (IOException prep)` 兜住，
+writer 线程直接死亡，`running` 仍为 true，队列继续堆积但永不落盘。
+**修复**：`Path tracePath = Path.of(outFile).toAbsolutePath().normalize()`，再取 parent；
+或 `Path parent = tracePath.getParent(); if (parent != null) createDirectories(parent);`。
+补一条相对 `out=` 的 agent IT。
+
+### I-02（P3，实测）`services.json` 仍有两个裸 NPE 入口
+
+```bash
+m2m audit -s <{"services":[null]}>   # Cannot invoke ServiceEntry.getName() because "s" is null
+m2m audit -s <{"exclude":[null]}>    # Cannot invoke String.indexOf because "pattern" is null
+```
+
+`ServicesConfig.validate()` 只校验了 `services` 列表本身与 `modules` 元素，没校验
+`ServiceEntry` 元素与 `exclude` 元素。修复：`services` 元素 null、`exclude` 元素 null/空白都抛
+`E_BAD_SERVICES_JSON`；补两条最小测试。
+
+### I-03（P3，代码）`ArchitectureAuditor.audit()` 公共 API 仍可绕过阈值校验
+
+`audit(graph, landscape, cfg)` 直接使用 cfg，没有 `cfg.validate()`；CLI 入口校验了，
+库用户仍可传 `Infinity`/负数。修复：在 `audit(...)` 开头调用 `cfg.validate()`（或文档明确要求调用方校验）。
+
+### I-04（P3，代码）F-02 reroute 后没有再次检查自桥
+
+`rewriteCrossServiceCalls` 的顺序是：
+
+```java
+if (providerOwner.equals(consumerOwner)) continue;
+if ("common".equals(providerOwner)) {
+    providerOwner = serviceImplOwnerOf(...);
+    // 这里没有再比较 providerOwner == consumerOwner
+}
+```
+
+如果某个接口被提升进 common、而实现类恰好在消费者所在服务，reroute 后两端同属一个服务，
+仍会生成“HTTP 打自己”的自桥。修复：reroute 后重新执行同属判定（或把同属判定下沉到最终 owner）。
+
+### I-05（P3，代码）F-05 对“一好一坏”文件仍静默
+
+当前只判 `cu.getTypes().isEmpty()`。若文件有 `class A {}` + `class B { void broken( }`，
+`getTypes()` 非空，B 仍被丢弃且不进 `parseFailures`。建议以 `result.getProblems()` 非空为准
+（至少 WARN），或在注册循环里发现类型缺失时补记。
+
+### I-06（P3，代码）新增测试仍有两个断言不隔离
+
+`ProjectScannerTypePositionTest` 的 `LocalTarget local = new LocalTarget();` 同时产生
+`CONSTRUCT` 边，`throw new ThrowsTarget();` 也同时产生 `CONSTRUCT` 边——即使
+“局部变量类型”或“throws”提取整段删掉，断言仍会通过。应改成唯一引用点（如
+`LocalTarget local = null;`、`throw (ThrowsTarget) null;` 或单独方法签名）。
+
+## I.4 结论
+
+- **没有新的 P0/P1**；A-01/A-02/A-04/F-01/F-02/F-03/F-07 等真实链路已实测贯通，
+  `mvn package` 12 jar、服务启动到 DataSource，0.3.0 代码侧门禁可以视为清除。
+- 仍需收尾：I-01（agent 相对 out 的 NPE，P2）、I-02/I-03/I-04/I-05/I-06、F-09（Q 双值）、
+  F-15（AGENTS 计数）、F-16（round-5 未提交）。均为小修/文档/测试，不阻塞发布。
+- 建议：修 I-01 + 补 F-01/F-03/F-05/F-07 的回归测试后，把 round-5 一起提交（英文提交信息），
+  再跑一次真实 RuoYi 生成→package→启动 与 `mvn verify` 作为发布前最终证据。
+
+
+---
+
+# 附 J：Kimi 复核附 H 并修复 round-5 剩余项（2026-10-19 21:35，HEAD=d47437b develop 工作区）
+
+## J.1 附 H 核验（deepseek 附 I 已独立实测确认，本轮读码复核一致）
+
+G-01（matchInterface 补简单名分支）、F-05（scan() 开头 clear）、F-06（round-trip 测试）、
+F-10（alpha+beta>0）四处改动与描述一致；`BridgeRerouteTest`/`NonFiniteDoubleSerializationTest` 在树且有效。
+附 I 对附 H 的实测结论（7 组真跨服务桥、F-01/F-03/F-07/F-08 闭环）本轮抽查复核无误。
+
+## J.2 附 I 剩余项修复
+
+| 项 | 修复 | 验证 |
+|---|---|---|
+| I-01（P2）agent 相对 out= NPE | `TraceRecorder`：outFile 先 `toAbsolutePath().normalize()` 再取 parent，parent 为 null 跳过创建；POSIX 权限设置同步改用归一化路径 | 实测：`out=rel.log` 正常落盘（N 行齐全、0640、writer 线程无 NPE） |
+| I-02 services.json 裸 NPE | `ServicesConfig.validate()` 补 services 元素 null 与 exclude 元素 null/空白检查；新增 `ServicesConfigNullElementTest` 两条 | 测试绿 |
+| I-03 audit() 公共 API 绕过校验 | `ArchitectureAuditor.audit(...)` 开头 `cfg.validate()`；同测试类补一条 Infinity 阈值断言 | 测试绿 |
+| I-04 reroute 后未重查自桥 | F-02 reroute 到 impl 属主后，重新执行 `providerOwner.equals(consumerOwner)` 同属判定 | RuoYi 回归：桥数不变（7 组全 svc→svc，0 组 common 相关） |
+| I-05 「一好一坏」文件静默 | problems 非空即计 parseFailures + WARN（不再要求 0 顶层类型才记录），好类型正常注册 | core 单测绿 |
+| I-06 测试断言不隔离 | `ProjectScannerTypePositionTest`：LocalTarget 改 `= null`、ThrowsTarget 去掉 `new`——**隔离后立刻暴露真缺陷：多 catch（UnionType）的类型不进边**，`addTypeEdges` 补 UnionType 递归 | 修复后测试绿 |
+| F-09 Q 双值 | PartitionMetrics 类注释补容差说明（融合权重×1000 取整所致，千分位级，非缺陷） | — |
+| F-15 AGENTS 计数 | 83 → 89 单测（含本轮新增 3 条） | — |
+
+## J.3 收尾验证
+
+- 全量 `mvn verify` **BUILD SUCCESS**：core 54 + codegen 11 + mcp 24 = **89 单测**，5 IT 全绿
+- 冻结基线对拍 **identical**
+- RuoYi 端到端：7 组桥（全 svc→svc）/ 7 项人工，`mvn package` exit=0、12 jar 全出
+
+## J.4 结论
+
+附 I 列出的 I-01..I-06 与 F-09/F-15 全部处理完毕，其中 I-06 的断言隔离又抓起一个真实缺陷
+（UnionType 丢边）——deepseek 连续三轮的「测试缺口」批评每次都在兑现。
+剩余：F-16（round-5 提交，按惯例由 zcode 执行、英文提交信息、双推 github+nas）、
+I-01 的 agent IT 回归用例（建议下轮补，需子进程 fixture）。
+**0.3.0 发布前最后一步：推送后观察 GitHub Actions 首跑。**
+
+
+---
+
+# 附 K：zcode round-6 收尾（2026-10-20，HEAD=d47437b + 未提交工作区 → 本轮提交）
+
+按 improvement-plan（GPT 压缩版）P0 清单执行；三家模型（ChatGPT 规划 / DeepSeek 复核 / Kimi 修复）结论合流后的收口轮。
+
+## K.1 回归测试补齐（全部先红后绿）
+
+红验证方法：对修复所在单文件 `git show <修复前 commit>:<path>` 回退（或手术式删除修复块），跑测试确认失败，再恢复工作区版本。
+
+| 项 | 测试 | 红证据（修复前 commit） |
+|---|---|---|
+| F-01/F-07 | `EvilAnalysisGuardTest`（恶意 packageName/sourcePath 零逃逸 + protectedInputs 拒删） | 回退 MicroserviceGenerator→84c831d：1 failure，逃逸路径写出 outDir |
+| F-03 | `HostOriginFilterTest`（web 测试基建 0→4：Origin 带端口 200 / 恶意 Origin 403 / 伪造 Host 403 / IPv6） | 回退 ConsoleApplication→84c831d：1 failure（同源带端口 POST 403） |
+| F-05 | `ProjectScannerParseFailureTest`（恢复型错误进 parseFailures / 复用不累积 / 全坏报 E_PARSE_FAILED） | 回退 ProjectScanner→84c831d：3/4 failure |
+| F-11/I-02 | `ServicesConfigNullElementTest` +1（modules:[null]） | 回退 ServicesConfig→84c831d：3/4 failure |
+| I-01 | `AgentRelativeOutIT`（真 fork、相对 out=、E/N 行、0640） | 回退 TraceRecorder→d47437b：writer 线程 NPE 复现 |
+| I-04 | `BridgeRerouteTest` +1（impl 在消费者服务 → 无自桥、本地注入保留） | 删除同属重判块：`svc-consumer -> svc-consumer` 自桥复现 |
+| F-09 | `PartitionQToleranceTest`（静态=取整误差级 / 动态强化=百分位内；A-06 的 0.22 量级可抓） | 契约锁定型（A-06 修复已在 HEAD） |
+
+## K.2 本轮新修
+
+- **E_PARSE_FAILED**（A-15 建议的收尾）：全部源文件解析失败时不再误导性报 `E_PKG_NO_MATCH`。
+- **F-09 口径修正**：原「差异来自融合权重取整」的注释不准确——实验证明 `fuse` 按 max 归一化会把动态边抬到与静态同量级，动态占比大时差异可达 0.05+（把动态边压到跨簇上复现）。类注释、README 双语、测试三处统一为诚实口径：静态=取整误差；动态=随占比（RuoYi 实测 0.002）。
+- **测试盲区澄清**：JavaParser 3.26.2 对多数语法错误恢复为 0 顶层类型（I-05 声称的「一好一坏 types 非空」仅在语句级可恢复错误如悬空 else 出现），已写进测试注释。
+
+## K.3 文档与 CI
+
+- README×2：CLI 架构行/Homebrew 注释补 `audit`；generate 验收行改 `mvn package`（12 jar）+ 启动到数据源；4KB 承诺改「按工具截断」；补 Q 双口径说明段。
+- mcp-design：15→17 工具、五→六模块、Q=0.81→0.77、§8 第 1 条改按工具治理（选 B）。
+- AGENTS：计数统一 103+6（以最近 verify 为准）；去重「下一步候选」；compile 措辞改 package。
+- ci.yml：`mvn -B clean verify`；verify 后清理 `~/.m2/repository/com/demo`（防生成构件跨 run 污染缓存掩盖缺陷）；失败上传 surefire/failsafe 报告（7 天）。
+
+## K.4 收尾验证
+
+- `mvn -B clean verify` **BUILD SUCCESS：103 单测 + 6 IT**（core 61 / codegen 14 / web 4 / mcp 24；agent 2 + codegen 1 + mcp 3）——web 从零断言到 4 条。
+- RuoYi 端到端：analyze 290 类/980 边 → partition 冻结基线对拍 **IDENTICAL** → generate（263 类 / 7 桥全 svc→svc / 0 处 svc.common / 7 人工项）→ `mvn -DskipTests package` **BUILD SUCCESS（12 服务 jar + common）** → svc-user 启动停在 `Failed to configure a DataSource`（预期验收线，无 mapper/placeholder 错误）。
+
+## K.5 结论
+
+P0（§2.2/§2.3/§2.4）全部落地；plan 的 §3（入口契约测试扩展）/§4（可观测性）/§5-§6（诊断/约束）仍为 P1+ 迭代项。
+剩余发布前动作：推送 github+nas 后观察 GitHub Actions 首跑。
